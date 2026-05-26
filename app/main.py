@@ -3,18 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import AppConfig
 from app.ha_client import HAClient
-from app.parser import parse_config
-from app.renderer import render_page, render_page_list
+from app.parser import parse_dashboard_from_api, parse_dashboard_from_file
+from app.renderer import render_view, render_view_index
 from app.sse_manager import SSEManager
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -26,21 +28,31 @@ APP_DIR = Path(__file__).parent
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = AppConfig.from_env()
-    cfg_path = config.config_path
-
-    if cfg_path.exists():
-        try:
-            dashboard = parse_config(str(cfg_path))
-            logger.info("Loaded config from %s (%d pages)", cfg_path, len(dashboard.pages))
-        except Exception as e:
-            logger.error("Failed to parse config: %s", e)
-            dashboard = None
-    else:
-        logger.warning("Config not found at %s — no pages available", cfg_path)
-        dashboard = None
 
     ha_client = HAClient(config.ha_url, config.ha_token)
     connected = await ha_client.connect()
+
+    dashboard = None
+
+    if connected:
+        try:
+            raw = await ha_client.get_dashboard_config(config.dashboard_path)
+            if raw:
+                dashboard = parse_dashboard_from_api(raw)
+                logger.info("Fetched dashboard '%s' from HA (%d views)", config.dashboard_path, len(dashboard.views))
+        except Exception as e:
+            logger.warning("Failed to fetch dashboard from HA: %s", e)
+
+    if dashboard is None and config.config_path and config.config_path.exists():
+        try:
+            dashboard = parse_dashboard_from_file(str(config.config_path))
+            logger.info("Loaded config from %s (development fallback)", config.config_path)
+        except Exception as e:
+            logger.warning("Failed to load development config: %s", e)
+
+    if dashboard is None:
+        logger.warning("No dashboard loaded — no views available")
+
     if not connected:
         logger.info("Running in offline mode — HA features disabled")
 
@@ -70,13 +82,18 @@ if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
+_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     dashboard = getattr(app.state, "dashboard", None)
-    if dashboard and dashboard.pages:
-        return render_page_list(dashboard.pages)
+    if dashboard and dashboard.views:
+        return HTMLResponse(render_view_index(dashboard.views), headers=_NO_CACHE)
     return HTMLResponse(
-        "<html><body><h1>LightDash</h1><p>No dashboard config loaded.</p></body></html>"
+        '<html><body style="background:#111;color:#eee;padding:20px;font-family:sans-serif">'
+        "<h1>LightDash</h1><p>No dashboard config loaded.</p></body></html>",
+        headers=_NO_CACHE,
     )
 
 
@@ -86,58 +103,78 @@ async def health():
     return {"status": "ok", "ha_connected": ha_ok}
 
 
-@app.get("/page/{page_id}", response_class=HTMLResponse)
-async def page(page_id: str):
+@app.get("/view/{view_path:path}", response_class=HTMLResponse)
+async def view(view_path: str):
     dashboard = getattr(app.state, "dashboard", None)
     if not dashboard:
-        return HTMLResponse("<html><body><h1>No config loaded</h1></body></html>", status_code=503)
+        return HTMLResponse("<html><body><h1>No config loaded</h1></body></html>", status_code=503, headers=_NO_CACHE)
 
-    for p in dashboard.pages:
-        if p.id == page_id:
-            return render_page(p, dashboard)
+    cfg = getattr(app.state, "config", None)
+    ha_url = cfg.ha_url if cfg else ""
 
-    return PlainTextResponse("Page not found: " + page_id, status_code=404)
+    ha = getattr(app.state, "ha_client", None)
+    entity_icons = {}
+    if ha and ha.is_connected:
+        states = await ha.get_states()
+        if states:
+            entity_icons = {
+                s["entity_id"]: s["attributes"].get("icon", "")
+                for s in states if s["attributes"].get("icon")
+            }
+
+    for v in dashboard.views:
+        if v.path == view_path:
+            return HTMLResponse(
+                render_view(v, dashboard, ha_url=ha_url, entity_icons=entity_icons),
+                headers=_NO_CACHE,
+            )
+
+    return RedirectResponse(url="/", status_code=302, headers=_NO_CACHE)
 
 
 @app.post("/action")
 async def handle_action(request: Request):
-    try:
-        data: Dict[str, Any] = await request.json()
-    except Exception:
+    raw = await request.body()
+    logger.debug("Raw POST body: %s", raw)
+    raw_str = raw.decode("utf-8", errors="replace")
+    if raw_str.startswith("{"):
+        data: Dict[str, Any] = json.loads(raw_str) if raw_str else {}
+    elif raw_str:
+        data = dict(urllib.parse.parse_qsl(raw_str))
+    else:
         data = {}
 
-    widget_id = data.get("widget_id", "")
-    event = data.get("event", "")
-    widget_type = data.get("type", "")
+    entity_id = data.get("entity_id", "")
+    action_type = data.get("action", "toggle")
+    service = data.get("service", "")
+    target = data.get("target", {})
+    action_data = data.get("data", {})
 
-    logger.info("Action: widget=%s event=%s type=%s", widget_id, event, widget_type)
+    logger.info("Action: entity=%s action=%s service=%s", entity_id, action_type, service)
 
     ha = getattr(app.state, "ha_client", None)
-    if ha and ha.is_connected and widget_id:
-        entity_id = widget_id
-        domain = entity_id.split(".")[0] if "." in entity_id else ""
-        if event in ("on_click",) and widget_type in ("switch", "button"):
-            domain_service_map = {
-                "switch": ("switch", "toggle"),
-                "light": ("light", "toggle"),
-                "fan": ("fan", "toggle"),
-                "climate": ("climate", "toggle"),
-                "cover": ("cover", "toggle"),
-                "media_player": ("media_player", "media_play_pause"),
-                "lock": ("lock", "lock"),
-                "input_boolean": ("input_boolean", "toggle"),
-            }
-            if domain in domain_service_map:
-                svc_domain, svc_name = domain_service_map[domain]
-                await ha.call_service(svc_domain, svc_name, {"entity_id": entity_id})
-                logger.info("Called %s.%s on %s", svc_domain, svc_name, entity_id)
-        elif event in ("on_value", "on_change") and widget_type == "slider":
-            value = data.get("value")
-            if value is not None and domain == "light":
-                await ha.call_service("light", "turn_on", {
-                    "entity_id": entity_id,
-                    "brightness_pct": int(value),
-                })
+
+    if ha and ha.is_connected:
+        if action_type == "toggle":
+            if service:
+                parts = service.split(".")
+                if len(parts) == 2:
+                    payload: Dict[str, Any] = {"entity_id": entity_id}
+                    result = await ha.call_service(parts[0], parts[1], payload)
+                    logger.info("Toggle result: %s", "success" if result is not None else "failed")
+
+        elif action_type == "call-service":
+            if service:
+                parts = service.split(".")
+                if len(parts) == 2:
+                    payload = dict(target)
+                    if entity_id and "entity_id" not in payload:
+                        payload["entity_id"] = entity_id
+                    payload.update(action_data)
+                    result = await ha.call_service(parts[0], parts[1], payload)
+                    logger.info("Service call result: %s", "success" if result is not None else "failed")
+    else:
+        logger.warning("HA not connected — cannot forward action")
 
     return HTMLResponse("<!-- action received -->")
 
@@ -202,3 +239,30 @@ async def api_entity_value(entity_id: str):
     unit = state.get("attributes", {}).get("unit_of_measurement", "")
     display = f"{val} {unit}" if unit else str(val)
     return PlainTextResponse(display)
+
+
+@app.get("/api/history/{entity_id:path}")
+async def api_history(entity_id: str, hours: int = 24):
+    ha = getattr(app.state, "ha_client", None)
+    if not ha or not ha.is_connected:
+        return {"error": "HA not connected"}
+    history = await ha.get_history(entity_id, hours)
+    return history or []
+
+
+@app.get("/api/dashboard")
+async def api_dashboard():
+    dashboard = getattr(app.state, "dashboard", None)
+    if not dashboard:
+        return {"error": "No dashboard loaded"}
+    return JSONResponse(_dashboard_to_dict(dashboard))
+
+
+def _dashboard_to_dict(dashboard) -> Dict:
+    views_data = []
+    for v in dashboard.views:
+        cards_data = []
+        for c in v.cards:
+            cards_data.append({"type": c.type, **c.config})
+        views_data.append({"title": v.title, "path": v.path, "icon": v.icon, "badges": v.badges, "cards": cards_data, "type": v.type, "bg_color": v.bg_color})
+    return {"title": dashboard.title, "views": views_data}

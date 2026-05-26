@@ -1,268 +1,83 @@
-display:
-  - platform: dummy
-    dimensions:
-      width: 480
-      height: 480
-
-lvgl:
-  bg_color: 0x121212
-
-  pages:
-    - id: home
-      title: Home
-      layout:
-        type: flex
-        flex_flow: COLUMN
-      widgets:
-        - obj:
-            layout:
-              type: grid
-              grid_columns: ["1fr", "1fr", "1fr", "1fr", "1fr", "1fr", "1fr", "1fr", "1fr", "1fr", "1fr", "1fr"]
-              grid_rows: ["1fr", "1.4fr", "1.8fr", "0.5fr"]
-            width: 100%
-            pad_all: 8
-            flex_grow: 1
-            widgets:
-              - obj:
-                  grid_cell_column_pos: 0
-                  grid_cell_column_span: 3
-                  radius: 12
-                  bg_color: 0x1E1E1E
-                  pad_all: 12
-                  layout:
-                    type: flex
-                    flex_flow: COLUMN
-                    flex_align_cross: CENTER
-                    flex_align_main: CENTER
-                  widgets:
-                    - led:
-                        color: 0xFFB300
-                        width: 16
-                        height: 16
-                    - button:
-                        id: light.porch
-                        text: Porch
-                        bg_color: 0x121212
-                        text_color: 0xFFFFFF
-                        radius: 8
-                        width: 80
-                        height: 36
-                        on_click: {}
-              - obj:
-                  grid_cell_column_pos: 3
-                  grid_cell_column_span: 3
-                  radius: 12
-                  bg_color: 0x1E1E1E
-                  pad_all: 12
-                  layout:
-                    type: flex
-                    flex_flow: COLUMN
-                    flex_align_cross: CENTER
-                    flex_align_main: CENTER
-                  widgets:
-                    - led:
-                        color: 0xFFB300
-                        width: 16
-                        height: 16
-                    - button:
-                        id: light.entryway
-                        text: Entryway
-                        bg_color: 0x121212
-                        text_color: 0xFFFFFF
-                        radius: 8
-                        width: 80
-                        height: 36
-                        on_click: {}
-              - obj:
-                  grid_cell_column_pos: 6
-                  grid_cell_column_span: 6
-                  radius: 12
-                  bg_color: 0x1E1E1E
-                  pad_all: 16
-                  layout:
-                    type: flex
-                    flex_flow: COLUMN
-                    flex_align_cross: CENTER
-                    flex_align_main: CENTER
-                  widgets:
-                    - label:
-                        id: sensor.friendly_time
-                        text: "14:30"
-                        text_font: montserrat_48
-                        text_color: 0xFFFFFF
-                        text_align: CENTER
-              - obj:
-                  grid_cell_column_pos: 0
-                  grid_cell_row_pos: 1
-                  grid_cell_column_span: 2
-                  radius: 12
-                  bg_color: 0x1E1E1E
-                  pad_all: 10
-                  layout:
-                    type: flex
-                    flex_flow: COLUMN
-                    flex_align_cross: CENTER
-                    flex_align_main: CENTER
-                  widgets:
-                    - label:
-                        text: Radiators
-                        text_color: 0xAAAAAA
-                        text_font: montserrat_12
-                        text_align: CENTER
-                    - label:
-                        id: input_number.home_comfort_temperature
-                        text: "20"
-                        text_font: montserrat_28
-                        text_color: 0xFFFFFF
-                        text_align: CENTER
-              - obj:
-                  grid_cell_column_pos: 2
-                  grid_cell_row_pos: 1
-                  grid_cell_column_span: 6
-                  radius: 12
-                  bg_color: 0x1E1E1E
-                  pad_all: 8
-                  layout:
-                    type: flex
-                    flex_flow: COLUMN
-                    flex_align_main: SPACE_EVENLY
-                  widgets:
-                    - obj:
-                        layout:
-                          type: flex
-                          flex_flow: ROW
-                          flex_align_main: SPACE_BETWEEN
-                          flex_align_cross: CENTER
-                        width: 100%
-                        widgets:
-                          - label:
-                              text: Dining Room
-                              text_color: 0xFFFFFF
-                              text_font: montserrat_14
-                          - switch:
-                              id: light.dining_room
-                              on_click: {}
-                    - obj:
-                        layout:
-                          type: flex
-                          flex_flow: ROW
-                          flex_align_main: SPACE_BETWEEN
-                          flex_align_cross: CENTER
-                        width: 100%
-                        widgets:
-                          - label:
-                              text: Kitchen
-                              text_color: 0xFFFFFF
-                              text_font: montserrat_14
-                          - switch:
-                              id: light.kitchen
-                              on_click: {}
-                    - obj:
-                        layout:
-                          type: flex
-                          flex_flow: ROW
-                          flex_align_main: SPACE_BETWEEN
-                          flex_align_cross: CENTER
-                        width: 100%
-                        widgets:
-                          - label:
-                              text: Kitchen Roof
-                              text_color: 0xFFFFFF
-                              text_font: montserrat_14
-                          - switch:
-                              id: cover.kitchen_roof
-                              on_click: {}
-              - obj:
-                  grid_cell_column_pos: 0
-                  grid_cell_row_pos: 2
-                  grid_cell_column_span: 6
-                  radius: 12
-                  bg_color: 0x1E1E1E
-                  pad_all: 8
-                  layout:
-                    type: flex
-                    flex_flow: COLUMN
-                    flex_align_main: SPACE_EVENLY
-                  widgets:
-                    - obj:
-                        layout:
-                          type: flex
-                          flex_flow: ROW
-                          flex_align_main: SPACE_BETWEEN
-                          flex_align_cross: CENTER
-                        width: 100%
-                        widgets:
-                          - label:
-                              text: Pendant
-                              text_color: 0xFFFFFF
-                              text_font: montserrat_14
-                          - switch:
-                              id: light.living_room_pendant_light
-                              on_click: {}
-                    - obj:
-                        layout:
-                          type: flex
-                          flex_flow: ROW
-                          flex_align_main: SPACE_BETWEEN
-                          flex_align_cross: CENTER
-                        width: 100%
-                        widgets:
-                          - label:
-                              text: Cabinets
-                              text_color: 0xFFFFFF
-                              text_font: montserrat_14
-                          - switch:
-                              id: light.living_room_cabinets
-                              on_click: {}
-                    - obj:
-                        layout:
-                          type: flex
-                          flex_flow: ROW
-                          flex_align_main: SPACE_BETWEEN
-                          flex_align_cross: CENTER
-                        width: 100%
-                        widgets:
-                          - label:
-                              text: Side table
-                              text_color: 0xFFFFFF
-                              text_font: montserrat_14
-                          - switch:
-                              id: light.living_room_side_table_lamp
-                              on_click: {}
-                    - obj:
-                        layout:
-                          type: flex
-                          flex_flow: ROW
-                          flex_align_main: SPACE_BETWEEN
-                          flex_align_cross: CENTER
-                        width: 100%
-                        widgets:
-                          - label:
-                              text: Floor lamp
-                              text_color: 0xFFFFFF
-                              text_font: montserrat_14
-                          - switch:
-                              id: light.living_room_floor_lamp
-                              on_click: {}
-              - obj:
-                  grid_cell_column_pos: 0
-                  grid_cell_row_pos: 3
-                  grid_cell_column_span: 12
-                  radius: 12
-                  bg_color: 0x1E1E1E
-                  pad_all: 10
-                  layout:
-                    type: flex
-                    flex_flow: ROW
-                    flex_align_main: SPACE_BETWEEN
-                    flex_align_cross: CENTER
-                  width: 100%
-                  widgets:
-                    - label:
-                        text: Other rooms
-                        text_color: 0xFFFFFF
-                        text_font: montserrat_16
-                    - label:
-                        text: ">"
-                        text_color: 0xFFFFFF
-                        text_font: montserrat_20
+views:
+  - type: sections
+    max_columns: 12
+    background:
+      image: /api/image/serve/df6d99dadd42ccd63e0d444628af8b75/original
+    title: Home
+    theme: Google Dark Theme
+    badges: []
+    sections:
+      - type: grid
+        cards:
+          - type: tile
+            grid_options:
+              columns: 3
+            entity: light.porch
+            show_entity_picture: false
+            hide_state: true
+            vertical: true
+            features_position: bottom
+          - type: tile
+            grid_options:
+              columns: 3
+            entity: light.entryway
+            show_entity_picture: false
+            hide_state: true
+            vertical: true
+            features_position: bottom
+          - clock_style: digital
+            clock_size: medium
+            time_zone: Europe/London
+            time_format: '24'
+            show_seconds: false
+            no_background: true
+            type: clock
+            grid_options:
+              columns: 6
+              rows: 1
+          - type: tile
+            grid_options:
+              columns: 12
+            entity: input_number.home_comfort_temperature
+            name: Radiators
+            show_entity_picture: false
+            vertical: false
+            features:
+              - style: buttons
+                type: numeric-input
+            features_position: inline
+          - type: entities
+            entities:
+              - entity: light.dining_room
+              - entity: light.kitchen
+              - entity: cover.kitchen_roof
+            show_header_toggle: false
+            grid_options:
+              columns: 6
+              rows: auto
+          - type: entities
+            entities:
+              - entity: light.living_room_pendant_light
+                name: Pendant
+              - entity: light.living_room_cabinets
+                name: Cabinets
+                secondary_info: none
+              - entity: light.living_room_side_table_lamp
+                name: Side table
+              - entity: light.living_room_floor_lamp
+                name: Floor lamp
+            grid_options:
+              columns: 6
+              rows: auto
+          - type: custom:mushroom-template-card
+            primary: Other rooms
+            secondary: ''
+            icon: mdi:arrow-right-bold
+            icon_color: '#FFFFFF'
+            layout: horizontal
+            tap_action:
+              action: navigate
+              navigation_path: /nspanel-hallway/other-rooms
+            grid_options:
+              columns: 12
+              rows: 1

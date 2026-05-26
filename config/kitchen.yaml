@@ -1,0 +1,39 @@
+views:
+  - title: Kitchen
+    path: kitchen
+    badges:
+      - entity: sensor.kitchen_temperature
+    cards:
+      - type: heading
+        heading: Lights
+      - type: grid
+        columns: 2
+        cards:
+          - type: tile
+            entity: light.kitchen_main
+            icon: mdi:ceiling-light
+            color: yellow
+            tap_action:
+              action: toggle
+          - type: tile
+            entity: light.kitchen_under_cabinet
+            icon: mdi:lightbulb
+            color: blue
+            tap_action:
+              action: toggle
+      - type: heading
+        heading: Climate
+      - type: entities
+        entities:
+          - entity: sensor.kitchen_temperature
+            name: Temperature
+          - entity: sensor.kitchen_humidity
+            name: Humidity
+      - type: heading
+        heading: Appliances
+      - type: entities
+        entities:
+          - entity: switch.kitchen_dishwasher
+            name: Dishwasher
+          - entity: switch.kitchen_kettle
+            name: Kettle

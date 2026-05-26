@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -84,4 +84,36 @@ class HAClient:
             return None
         except Exception as e:
             logger.warning("States fetch error: %s", e)
+            return None
+
+    async def get_dashboard_config(self, url_path: str = "lovelace") -> Optional[Dict]:
+        if not self._connected:
+            logger.warning("HA not connected — cannot fetch dashboard config")
+            return None
+        try:
+            r = await self._http.get(f"/api/lovelace/config/{url_path}")
+            if r.is_success:
+                data = r.json()
+                if isinstance(data, dict) and "data" in data:
+                    return data["data"]
+                return data
+            logger.warning("Fetch dashboard config failed: %s %s", r.status_code, r.text)
+            return None
+        except Exception as e:
+            logger.warning("Fetch dashboard config error: %s", e)
+            return None
+
+    async def get_history(self, entity_id: str, hours: int = 24) -> Optional[List]:
+        if not self._connected:
+            return None
+        try:
+            from datetime import datetime, timedelta, timezone
+            start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+            params = {"filter_entity_id": entity_id, "minimal_response": "true"}
+            r = await self._http.get(f"/api/history/period/{start}", params=params)
+            if r.is_success:
+                return r.json()
+            return None
+        except Exception as e:
+            logger.warning("History fetch error: %s", e)
             return None

@@ -41,6 +41,7 @@ class SSEManager:
         display = f"{value} {unit}" if unit else str(value)
         event_name = f"entity_{entity_id.replace('.', '_')}"
         payload = f"event: {event_name}\ndata: {html.escape(str(display))}\n\n"
+        logger.info("SSE notify: event=%s data=%s", event_name, display)
         dead: List[asyncio.Queue] = []
         for q in self._clients:
             try:
@@ -59,12 +60,14 @@ class SSEManager:
         import ssl
         import websockets
 
-        ws_url = ha_url.replace("http://", "ws://").replace("https://", "wss://")
+        ws_url = ha_url.replace("http://", "ws://").replace("https://", "wss://").strip("/")
         ws_url = f"{ws_url}/api/websocket"
 
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
+
+        msg_id = 0
 
         while True:
             try:
@@ -77,7 +80,12 @@ class SSEManager:
                         logger.error("HA WebSocket auth failed: %s", auth_resp)
                         return
 
-                    await ws.send(json.dumps({"type": "subscribe_events", "event_type": "state_changed"}))
+                    msg_id += 1
+                    await ws.send(json.dumps({
+                        "id": msg_id,
+                        "type": "subscribe_events",
+                        "event_type": "state_changed",
+                    }))
                     sub_resp = json.loads(await ws.recv())
                     if sub_resp.get("success"):
                         logger.info("Subscribed to HA state changes")

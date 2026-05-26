@@ -1,1 +1,1 @@
-"""HA-LightDash: ESPHome LVGL YAML → HTML/HTMX dashboard server."""
+"""HA-LightDash: HA Lovelace YAML -> lightweight HTML/HTMX dashboard server."""

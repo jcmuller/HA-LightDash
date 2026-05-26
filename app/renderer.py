@@ -1,26 +1,57 @@
 from __future__ import annotations
 
 import html
+import httpx
 import json
+import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.layout_engine import grid_cell_to_css, layout_to_css
-from app.models import Dashboard, GridCell, LayoutConfig, Page, Widget
-from app.style_engine import _color_to_css, _size_to_css, props_to_css_list
+from app.models import Action, Card, Dashboard, Section, View
+
+logger = logging.getLogger(__name__)
 
 _SP = "  "
 
-EVENT_TRIGGER_MAP = {
-    "on_click": "click",
-    "on_value": "change",
-    "on_change": "change",
-    "on_long_press": "keydown[key=='Enter']",
-    "on_release": "mouseup",
-    "on_focus": "focus",
-    "on_scroll": "scroll",
+RENDERERS: Dict[str, Any] = {}
+
+_DEFAULT_ICONS: Dict[str, str] = {
+    "light": "mdi:lightbulb",
+    "switch": "mdi:light-switch",
+    "fan": "mdi:fan",
+    "input_boolean": "mdi:toggle-switch-variant",
+    "cover": "mdi:blinds",
+    "lock": "mdi:lock",
+    "scene": "mdi:palette",
+    "script": "mdi:script-text-play",
+    "automation": "mdi:robot",
+    "sensor": "mdi:thermometer",
+    "binary_sensor": "mdi:motion-sensor",
+    "climate": "mdi:thermostat",
+    "media_player": "mdi:speaker",
+    "person": "mdi:account",
+    "sun": "mdi:white-balance-sunny",
+    "weather": "mdi:weather-partly-cloudy",
+    "button": "mdi:button-pointer",
+    "input_number": "mdi:numeric",
+    "input_select": "mdi:form-dropdown",
+    "number": "mdi:numeric",
+    "select": "mdi:form-dropdown",
+    "timer": "mdi:timer",
+    "vacuum": "mdi:robot-vacuum",
+    "camera": "mdi:camera",
+    "device_tracker": "mdi:cellphone",
+    "alarm_control_panel": "mdi:shield-alert",
+    "valve": "mdi:valve",
+    "water_heater": "mdi:water-boiler",
+    "update": "mdi:package-up",
+    "siren": "mdi:alarm-light",
+    "humidifier": "mdi:water-percent",
 }
 
-RENDERERS: Dict[str, Any] = {}
+_entity_icons: Dict[str, str] = {}
+_ha_url: str = ""
+_icon_svg_cache: Dict[str, str] = {}
 
 
 def register(type_name: str):
@@ -30,24 +61,62 @@ def register(type_name: str):
     return decorator
 
 
-def render_page(page: Page, dashboard: Dashboard) -> str:
+def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons: Optional[dict] = None) -> str:
+    global _entity_icons, _ha_url
+    _entity_icons = entity_icons or {}
+    _ha_url = ha_url or ""
+
+    _prefetch_icons(view)
+
     bg = ""
-    if page.bg_color:
-        bg = " background-color: " + _color_to_css(page.bg_color) + ";"
-    elif dashboard.bg_color:
-        bg = " background-color: " + _color_to_css(dashboard.bg_color) + ";"
+    if view.bg_color:
+        bg += f"background-color: {view.bg_color};"
+    if view.bg_image:
+        img_url = view.bg_image
+        if img_url.startswith("/") and ha_url:
+            img_url = ha_url.rstrip("/") + img_url
+        bg += f"background-image: url('{html.escape(img_url)}');background-size: cover;background-position: center;"
 
-    page_style = "width: " + str(dashboard.display_width) + "px; height: " + str(dashboard.display_height) + "px;" + bg
+    needs_uplot = _view_needs_charts(view)
 
-    children_lines = [_render_widget(w, 2) for w in page.widgets]
-    children = "\n".join(children_lines)
+    if view.sections:
+        cards_html = "\n".join(_render_section(s, 2) for s in view.sections)
+    else:
+        cards_html = "\n".join(_render_card(c, 2) for c in view.cards)
 
-    page_layout = layout_to_css(page.layout)
-    if page_layout:
-        page_style += " " + "; ".join(f"{k}: {v}" for k, v in page_layout)
+    title = html.escape(view.title or dashboard.title)
+    path = html.escape(view.path)
 
-    title = html.escape(page.title or page.id or "Dashboard")
-    page_id = html.escape(page.id)
+    head_extra = ""
+    if needs_uplot:
+        head_extra += (
+            '<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>\n'
+            '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">\n'
+        )
+    if _view_needs_toggle_sync(view):
+        head_extra += (
+            '<script>\n'
+            'function st(){document.querySelectorAll(".tile-card .entity-state").forEach(function(e){'
+            'var t=e.closest(".tile-card").querySelector(".toggle-input");'
+            'if(t)t.checked=e.textContent.trim()==="on";})}\n'
+            'document.addEventListener("DOMContentLoaded",st);\n'
+            'document.addEventListener("htmx:afterSwap",st);\n'
+            'document.addEventListener("htmx:sseMessage",st);\n'
+            '</script>\n'
+        )
+    if _view_needs_clock(view):
+        head_extra += (
+            '<script>\n'
+            'function uc(){document.querySelectorAll(".clock-digital").forEach('
+            'function(e){var o={hour:"2-digit",minute:"2-digit",'
+            'timeZone:e.getAttribute("data-tz")||"Europe/London",'
+            'hour12:e.getAttribute("data-fmt")!=="24"};'
+            'if(e.getAttribute("data-sec"))o.second="2-digit";'
+            'e.textContent=(new Intl.DateTimeFormat("en-GB",o)).format(new Date())})}\n'
+            'setInterval(uc,30000);\n'
+            'document.addEventListener("DOMContentLoaded",uc);\n'
+            '</script>\n'
+        )
 
     return (
         '<!DOCTYPE html>\n'
@@ -58,20 +127,64 @@ def render_page(page: Page, dashboard: Dashboard) -> str:
         '<title>' + title + '</title>\n'
         '<link rel="stylesheet" href="/static/style.css">\n'
         '<script src="https://unpkg.com/htmx.org@2.0.4"></script>\n'
+        '<script src="https://unpkg.com/htmx-ext-sse@2.2.4/dist/sse.js"></script>\n'
+        + head_extra +
         '</head>\n'
         '<body>\n'
-        '<div class="lv-page" id="page-' + page_id + '" hx-ext="sse" sse-connect="/_sse" style="' + page_style + '">\n'
-        + children + '\n'
+        '<div class="lv-view" id="view-' + path + '" hx-ext="sse" sse-connect="/_sse" style="' + bg + '">\n'
+        + cards_html + '\n'
         '</div>\n'
         '</body>\n'
         '</html>'
     )
 
 
-def render_page_list(pages: List[Page]) -> str:
+def _render_section(section: Section, indent: int = 2) -> str:
+    cols = _section_col_count(section)
+    style = f"--section-cols: {cols}"
+    cards_html = ""
+    for c in section.cards:
+        go = c.get("grid_options")
+        span_col = 0
+        span_row = 0
+        if isinstance(go, dict):
+            span_col = go.get("columns", 0)
+            span_row = go.get("rows", 0)
+        cell_style = ""
+        if span_col:
+            cell_style += f"grid-column: span {min(span_col, cols)};"
+        if span_row and isinstance(span_row, int) and span_row > 1:
+            cell_style += f"grid-row: span {span_row};"
+        cell_attrs = {"class": "grid-cell"}
+        if cell_style:
+            cell_attrs["style"] = cell_style
+        card_content = _render_card(c, indent + 1)
+        cards_html += "\n" + _SP * (indent + 1) + f'<div{_build_attrs(cell_attrs)}>\n'
+        cards_html += card_content
+        cards_html += '\n' + _SP * (indent + 1) + '</div>'
+    if cards_html:
+        cards_html += "\n" + _SP * indent
+    return _h("div", {"class": "section-grid", "style": style}, cards_html, indent)
+
+
+def _section_col_count(section: Section) -> int:
+    max_col = 0
+    for c in section.cards:
+        go = c.get("grid_options")
+        if isinstance(go, dict):
+            span = go.get("columns", 0)
+            if span > max_col:
+                max_col = span
+    return max(max_col, 3)
+
+
+def render_view_index(views: List[View]) -> str:
     links = ""
-    for p in pages:
-        links += '    <li><a href="/page/' + html.escape(p.id) + '">' + html.escape(p.title or p.id) + '</a></li>\n'
+    for v in views:
+        links += '    <li><a href="/view/' + html.escape(v.path) + '">'
+        if v.icon:
+            links += '<span class="vi">' + html.escape(v.icon) + "</span> "
+        links += html.escape(v.title or v.path) + "</a></li>\n"
     return (
         '<!DOCTYPE html>\n'
         '<html lang="en">\n'
@@ -79,100 +192,64 @@ def render_page_list(pages: List[Page]) -> str:
         '<meta charset="UTF-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
         '<title>LightDash</title>\n'
-        '<style>\n'
-        'body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }\n'
-        'h1 { font-size: 1.5rem; margin-bottom: 16px; }\n'
-        'ul { list-style: none; padding: 0; }\n'
-        'li { margin: 8px 0; }\n'
-        'a { color: #4fc3f7; text-decoration: none; font-size: 1.1rem; }\n'
-        'a:hover { text-decoration: underline; }\n'
-        '</style>\n'
+        '<link rel="stylesheet" href="/static/style.css">\n'
         '</head>\n'
         '<body>\n'
+        '<div class="view-index">\n'
         '<h1>LightDash</h1>\n'
         '<ul>\n'
         + links +
         '</ul>\n'
+        '</div>\n'
         '</body>\n'
         '</html>'
     )
 
 
-def _render_widget(w: Widget, indent: int = 2) -> str:
-    renderer = RENDERERS.get(w.type)
+def _view_needs_charts(view: View) -> bool:
+    check_cards = view.cards
+    if view.sections:
+        check_cards = [c for s in view.sections for c in s.cards]
+    for c in check_cards:
+        if c.type in ("sensor", "history-graph", "statistics-graph"):
+            return True
+    return False
+
+
+def _view_needs_toggle_sync(view: View) -> bool:
+    check_cards = view.cards
+    if view.sections:
+        check_cards = [c for s in view.sections for c in s.cards]
+    for c in check_cards:
+        if c.type == "tile" and not c.get("hide_state"):
+            eid = c.get("entity", "")
+            if _is_binary_domain(eid):
+                return True
+        if c.type == "entities":
+            for ent in (c.get("entities") or []):
+                eid = ent if isinstance(ent, str) else (ent.get("entity", "") if isinstance(ent, dict) else "")
+                if _is_binary_domain(eid) and eid.split(".")[0] != "cover":
+                    return True
+    return False
+
+
+def _view_needs_clock(view: View) -> bool:
+    check_cards = view.cards
+    if view.sections:
+        check_cards = [c for s in view.sections for c in s.cards]
+    for c in check_cards:
+        if c.type == "clock":
+            return True
+    return False
+
+
+def _render_card(card: Card, indent: int = 2) -> str:
+    renderer = RENDERERS.get(card.type)
     if renderer is None:
-        return _SP * indent + '<!-- unknown widget: ' + html.escape(w.type) + ' -->'
-    html_out = renderer(w, indent)
-    if html_out is None:
-        return _SP * indent + '<!-- renderer returned None for: ' + html.escape(w.type) + ' -->'
-    return html_out
-
-
-def _common_attrs(w: Widget) -> Dict[str, str]:
-    attrs: Dict[str, str] = {}
-    if w.widget_id:
-        attrs["id"] = w.widget_id
-    classes = ["lv-" + w.type]
-    if w.props.get("checkable"):
-        classes.append("lv-checkable")
-    attrs["class"] = " ".join(classes)
-
-    css_pairs: List[Tuple[str, str]] = []
-
-    layout = w.props.get("layout")
-    if layout and isinstance(layout, LayoutConfig):
-        css_pairs.extend(layout_to_css(layout))
-
-    css_pairs.extend(props_to_css_list(w.props))
-
-    gc = _extract_grid_cell(w.props)
-    if gc:
-        css_pairs.extend(grid_cell_to_css(gc))
-
-    if css_pairs:
-        attrs["style"] = "; ".join(f"{k}: {v}" for k, v in css_pairs)
-
-    htmx = _events_to_htmx(w)
-    attrs.update(htmx)
-
-    return attrs
-
-
-def _events_to_htmx(w: Widget) -> Dict[str, str]:
-    attrs: Dict[str, str] = {}
-    for event_key, trigger in EVENT_TRIGGER_MAP.items():
-        if event_key in w.events:
-            attrs["hx-post"] = "/action"
-            attrs["hx-trigger"] = trigger
-            vals = {"widget_id": w.widget_id, "type": w.type, "event": event_key}
-            attrs["hx-vals"] = json.dumps(vals)
-            attrs["hx-swap"] = "none"
-            break
-    return attrs
-
-
-def _extract_grid_cell(props: Dict) -> Optional[GridCell]:
-    rp = props.get("grid_cell_row_pos")
-    cp = props.get("grid_cell_column_pos")
-    if rp is None and cp is None:
-        return None
-    return GridCell(
-        row_pos=rp,
-        column_pos=cp,
-        row_span=props.get("grid_cell_row_span"),
-        column_span=props.get("grid_cell_column_span"),
-        x_align=props.get("grid_cell_x_align"),
-        y_align=props.get("grid_cell_y_align"),
-    )
-
-
-def _render_children(children: List[Widget], indent: int) -> str:
-    if not children:
-        return ""
-    out = "\n"
-    for c in children:
-        out += _render_widget(c, indent + 1) + "\n"
-    out += _SP * (indent - 1)
+        return _render_placeholder(card, indent)
+    out = renderer(card, indent)
+    if out is None:
+        return _render_placeholder(card, indent)
     return out
 
 
@@ -201,360 +278,804 @@ def _build_attrs(attrs: Dict[str, str]) -> str:
     return " " + " ".join(parts) if parts else ""
 
 
-@register("obj")
-def _render_obj(w: Widget, indent: int) -> str:
-    children = _render_children(w.children, indent + 1)
-    attrs = _common_attrs(w)
-    return _h("div", attrs, children, indent)
-
-
-@register("container")
-def _render_container(w: Widget, indent: int) -> str:
-    return _render_obj(w, indent)
-
-
-@register("label")
-def _render_label(w: Widget, indent: int) -> str:
-    text = html.escape(w.text) if w.text else ""
-    attrs = _common_attrs(w)
-
-    eid = w.widget_id
-    if eid and "." in eid and "hx-swap" not in attrs:
-        attrs["hx-get"] = "/api/value/" + eid
-        attrs["hx-trigger"] = "load"
-        attrs["hx-target"] = "this"
-        attrs["hx-swap"] = "innerHTML"
-        sse_event = "entity_" + eid.replace(".", "_")
-        attrs["sse-swap"] = sse_event
-
-    return _h("span", attrs, text, indent)
-
-
-@register("button")
-def _render_button(w: Widget, indent: int) -> str:
-    text = html.escape(w.text) if w.text else ""
-    attrs = _common_attrs(w)
-    return _h("button", attrs, text, indent)
-
-
-@register("slider")
-def _render_slider(w: Widget, indent: int) -> str:
-    val = w.get("value") or w.get("val") or 50
-    min_val = w.get("min") or 0
-    max_val = w.get("max") or 100
-
-    wrapper_attrs: Dict[str, str] = {"class": "lv-slider-wrapper"}
-    width = w.get("width")
-    if width:
-        wrapper_attrs["style"] = "width: " + _size_to_css(width) + ";"
-
-    input_attrs = _common_attrs(w)
-    input_attrs["type"] = "range"
-    input_attrs["min"] = str(min_val)
-    input_attrs["max"] = str(max_val)
-    input_attrs["value"] = str(val)
-
-    s_style = input_attrs.get("style", "")
-    s_parts = [p.strip() for p in s_style.split(";") if p.strip() and not p.strip().startswith("width")]
-    s_parts.append("width: 100%")
-    input_attrs["style"] = "; ".join(s_parts)
-
-    for attr in list(input_attrs.keys()):
-        if attr.startswith("hx-"):
-            del input_attrs[attr]
-    eid = w.widget_id or ""
-    input_attrs["hx-post"] = "/action"
-    input_attrs["hx-trigger"] = "change"
-    input_attrs["hx-vals"] = 'js:{widget_id:"' + eid + '",type:"slider",event:"on_value",value:this.value}'
-    input_attrs["hx-swap"] = "none"
-    input_attrs["hx-target"] = "this"
-
-    s1 = _SP * (indent + 1)
-    input_html = _h("input", input_attrs, "", indent + 1)
-    val_span = s1 + '<span class="lv-slider-value">' + str(val) + "</span>"
-
-    content = "\n" + input_html + "\n" + val_span + "\n" + _SP * indent
-    return _h("div", wrapper_attrs, content, indent)
-
-
-@register("switch")
-def _render_switch(w: Widget, indent: int) -> str:
-    checked = w.get("state")
-    if checked is None:
-        checked = w.get("checked", False)
-    checked = bool(checked)
-
-    input_attrs = _common_attrs(w)
-    input_attrs["type"] = "checkbox"
-    input_attrs["role"] = "switch"
-    if checked:
-        input_attrs["checked"] = "checked"
-
-    s1 = _SP * (indent + 1)
-    input_html = _h("input", input_attrs, "", indent + 1)
-    label_html = ""
-    if w.text:
-        label_html = "\n" + s1 + '<span class="lv-switch-label">' + html.escape(w.text) + "</span>"
-
-    content = "\n" + input_html + label_html + "\n" + _SP * indent
-    return _h("label", {"class": "lv-switch-wrapper"}, content, indent)
-
-
-@register("checkbox")
-def _render_checkbox(w: Widget, indent: int) -> str:
-    checked = w.get("checked", False)
-
-    input_attrs = _common_attrs(w)
-    input_attrs["type"] = "checkbox"
-    if checked:
-        input_attrs["checked"] = "checked"
-
-    s1 = _SP * (indent + 1)
-    input_html = _h("input", input_attrs, "", indent + 1)
-    label_html = ""
-    if w.text:
-        label_html = "\n" + s1 + '<span class="lv-checkbox-label">' + html.escape(w.text) + "</span>"
-
-    content = "\n" + input_html + label_html + "\n" + _SP * indent
-    return _h("label", {"class": "lv-checkbox-wrapper"}, content, indent)
-
-
-@register("bar")
-def _render_bar(w: Widget, indent: int) -> str:
-    min_val = int(w.get("min") or 0)
-    max_val = int(w.get("max") or 100)
-    val = int(w.get("value") or w.get("val") or 0)
-    pct = ((val - min_val) / (max_val - min_val)) * 100 if max_val > min_val else 0
-    pct = max(0, min(100, pct))
-
-    bar_attrs = _common_attrs(w)
-    bar_style = bar_attrs.get("style", "")
-    if "height" not in bar_style:
-        bar_style += ("; " if bar_style else "") + "display: flex; align-items: flex-end;"
-    bar_attrs["style"] = bar_style
-
-    s1 = _SP * (indent + 1)
-    indicator = s1 + '<div class="lv-bar-indicator" style="width:' + str(pct) + '%;background:currentColor;height:100%"></div>\n' + _SP * indent
-
-    content = "\n" + indicator
-    return _h("div", bar_attrs, content, indent)
-
-
-@register("arc")
-def _render_arc(w: Widget, indent: int) -> str:
-    min_val = int(w.get("min") or 0)
-    max_val = int(w.get("max") or 100)
-    val = int(w.get("value") or w.get("val") or 0)
-    pct = ((val - min_val) / (max_val - min_val)) if max_val > min_val else 0
-    pct = max(0, min(1, pct))
-
-    size = w.get("width") or w.get("height") or 120
-    if isinstance(size, str):
-        try:
-            size = int(size.replace("px", ""))
-        except (ValueError, AttributeError):
-            size = 120
-
-    stroke_width = 8
-    radius = size // 2 - stroke_width
-    circumference = 2 * 3.14159 * radius
-    dash = circumference * pct
-    gap = circumference - dash
-
-    svg = (
-        '<svg width="' + str(size) + '" height="' + str(size) + '" viewBox="0 0 ' + str(size) + " " + str(size) + '">\n'
-        + _SP * (indent + 2) + '<circle cx="' + str(size // 2) + '" cy="' + str(size // 2) + '" r="' + str(radius) + '" fill="none" stroke="#555" stroke-width="' + str(stroke_width) + '"/>\n'
-        + _SP * (indent + 2) + '<circle cx="' + str(size // 2) + '" cy="' + str(size // 2) + '" r="' + str(radius) + '" fill="none" stroke="currentColor" stroke-width="' + str(stroke_width) + '" stroke-dasharray="'
-        + f"{dash:.1f}" + " " + f"{gap:.1f}" + '" stroke-linecap="round"/>\n'
-        + _SP * (indent + 1) + '</svg>'
-    )
-
-    attrs = _common_attrs(w)
-    htmx_only = {k: v for k, v in attrs.items() if k.startswith("hx-")}
-    arc_attrs: Dict[str, str] = {"class": "lv-arc"}
-    if htmx_only:
-        arc_attrs.update(htmx_only)
-    style_attr = attrs.get("style", "")
-    if style_attr:
-        arc_attrs.setdefault("style", style_attr)
-
-    val_text = '<span style="position:absolute;font-size:' + str(size // 4) + 'px;font-weight:bold">' + str(val) + '</span>'
-    s1 = _SP * (indent + 1)
-    content = "\n" + s1 + svg + "\n" + s1 + val_text + "\n" + _SP * indent
-    return _h("div", arc_attrs, content, indent)
-
-
-@register("textarea")
-def _render_textarea(w: Widget, indent: int) -> str:
-    placeholder = w.get("placeholder", "Enter text...")
-    text = w.text or ""
-    one_line = w.get("one_line", False)
-    max_length = w.get("max_length")
-
-    attrs = _common_attrs(w)
-    wrapper_attrs: Dict[str, str] = {"class": "lv-textarea"}
-    wrapper_style = attrs.get("style", "")
-    if wrapper_style:
-        wrapper_attrs["style"] = wrapper_style
-
-    textarea_attrs: Dict[str, str] = {"placeholder": placeholder}
-    if max_length:
-        textarea_attrs["maxlength"] = str(max_length)
-    if w.widget_id:
-        textarea_attrs["id"] = w.widget_id
-    textarea_attrs["class"] = "lv-textarea-input"
-
-    if one_line:
-        textarea_attrs["rows"] = "1"
-
-    events = _events_to_htmx(w)
-    textarea_attrs.update(events)
-
-    ta = _h("textarea", textarea_attrs, html.escape(text), indent + 1)
-    content = "\n" + ta + "\n" + _SP * indent
-    return _h("div", wrapper_attrs, content, indent)
-
-
-@register("dropdown")
-def _render_dropdown(w: Widget, indent: int) -> str:
-    options_raw = w.get("options", w.get("items", ""))
-    selected = int(w.get("selected", 0))
-
-    if isinstance(options_raw, str):
-        options = [o.strip() for o in options_raw.split("\n") if o.strip()]
-    elif isinstance(options_raw, list):
-        options = [str(o) for o in options_raw]
-    else:
-        options = ["Option 1", "Option 2"]
-
-    attrs = _common_attrs(w)
-    wrapper_attrs: Dict[str, str] = {"class": "lv-dropdown"}
-    wrapper_style = attrs.get("style", "")
-    if wrapper_style:
-        wrapper_attrs["style"] = wrapper_style
-
-    select_attrs: Dict[str, str] = {}
-    if w.widget_id:
-        select_attrs["id"] = w.widget_id
-    events = _events_to_htmx(w)
-    select_attrs.update(events)
-
-    options_html = ""
-    for i, opt in enumerate(options):
-        sel = " selected" if i == selected else ""
-        options_html += "\n" + _SP * (indent + 2) + '<option value="' + str(i) + '"' + sel + ">" + html.escape(opt) + "</option>"
-
-    select = _SP * (indent + 1) + "<select" + _build_attrs(select_attrs) + ">" + options_html + "\n" + _SP * (indent + 1) + "</select>"
-    content = "\n" + select + "\n" + _SP * indent
-    return _h("div", wrapper_attrs, content, indent)
-
-
-@register("roller")
-def _render_roller(w: Widget, indent: int) -> str:
-    options_raw = w.get("options", w.get("items", ""))
-    selected = int(w.get("selected", 0))
-    visible = int(w.get("visible_row_count", 3))
-
-    if isinstance(options_raw, str):
-        options = [o.strip() for o in options_raw.split("\n") if o.strip()]
-    elif isinstance(options_raw, list):
-        options = [str(o) for o in options_raw]
-    else:
-        options = ["Option 1", "Option 2", "Option 3"]
-
-    middle = visible // 2
-    start = max(0, selected - middle)
-    end = min(len(options), selected + middle + 1)
-    visible_opts = options[start:end]
-
-    items_html = ""
-    for i, opt in enumerate(visible_opts):
-        actual_idx = start + i
-        cls = "lv-roller-item" + (" selected" if actual_idx == selected else "")
-        items_html += "\n" + _SP * (indent + 1) + '<li class="' + cls + '" data-index="' + str(actual_idx) + '">' + html.escape(opt) + "</li>"
-
-    attrs = _common_attrs(w)
-    wrapper_attrs: Dict[str, str] = {"class": "lv-roller"}
-    wrapper_style = attrs.get("style", "")
-    if wrapper_style:
-        wrapper_attrs["style"] = wrapper_style
-    if w.widget_id:
-        wrapper_attrs["data-roller-id"] = w.widget_id
-
-    list_html = _SP * (indent + 1) + '<ul class="lv-roller-list">' + items_html + "\n" + _SP * (indent + 1) + "</ul>"
-    content = "\n" + list_html + "\n" + _SP * indent
-    return _h("div", wrapper_attrs, content, indent)
-
-
-@register("led")
-def _render_led(w: Widget, indent: int) -> str:
-    color = w.get("color", "0x00FF00")
-    brightness = int(w.get("brightness", 255))
-    opa_val = brightness / 255.0
-
-    attrs = _common_attrs(w)
-    style = attrs.get("style", "")
-    led_style = style + "; background-color: " + _color_to_css(color) + "; opacity: " + f"{opa_val:.2f}"
-    if "width:" not in style and "height:" not in style:
-        led_style += "; width: 20px; height: 20px; border-radius: 50%"
-    attrs["style"] = led_style
-    attrs["class"] = attrs.get("class", "") + " lv-led"
-
+def _entity_span(entity_id: str, card_id: str = "", indent: int = 0) -> str:
+    sid = html.escape(entity_id)
+    attrs: Dict[str, str] = {
+        "class": "entity-state",
+        "id": f"state-{sid}",
+        "hx-get": f"/api/value/{sid}",
+        "hx-trigger": "load",
+        "hx-swap": "innerHTML",
+    }
+    sse_event = "entity_" + entity_id.replace(".", "_")
+    attrs["sse-swap"] = sse_event
     return _h("span", attrs, "", indent)
 
 
-@register("spinner")
-def _render_spinner(w: Widget, indent: int) -> str:
-    size = w.get("width") or w.get("height") or 40
-    if isinstance(size, str):
-        try:
-            size = int(size.replace("px", ""))
-        except (ValueError, AttributeError):
-            size = 40
+def _prefetch_icons(view: View) -> None:
+    needed = set()
+    check_cards = view.cards
+    if view.sections:
+        check_cards = [c for s in view.sections for c in s.cards]
+    for c in check_cards:
+        eid = c.get("entity", "")
+        icon = _entity_icon(eid, c.get("icon", ""))
+        if icon:
+            needed.add(icon.removeprefix("mdi:"))
+        if c.type in ("entities", "glance"):
+            for ent in (c.get("entities") or []):
+                if isinstance(ent, str):
+                    eeid = ent
+                    eicon = ""
+                elif isinstance(ent, dict):
+                    eeid = ent.get("entity", "")
+                    eicon = ent.get("icon", "")
+                else:
+                    continue
+                resolved = _entity_icon(eeid, eicon)
+                if resolved:
+                    needed.add(resolved.removeprefix("mdi:"))
+    uncached = [n for n in needed if n not in _icon_svg_cache]
+    if not uncached or not _ha_url:
+        return
+    logger.info("Prefetching %d uncached icons", len(uncached))
+    base = "https://cdn.jsdelivr.net/npm/@mdi/svg@7.4.47/svg/"
+    with httpx.Client(timeout=10) as hx:
+        for name in uncached:
+            try:
+                r = hx.get(base + name + ".svg")
+                if r.status_code == 200:
+                    _icon_svg_cache[name] = r.text
+                else:
+                    logger.warning("Icon fetch failed %s: HTTP %d", name, r.status_code)
+            except Exception as e:
+                logger.warning("Icon fetch error %s: %s", name, e)
 
-    attrs = _common_attrs(w)
-    style = attrs.get("style", "")
-    attrs["style"] = style + "; width: " + str(size) + "px; height: " + str(size) + "px"
-    attrs["class"] = attrs.get("class", "") + " lv-spinner"
 
-    return _h("div", attrs, "", indent)
+def _icon_html(icon: str, size: int = 24) -> str:
+    if not icon:
+        return ""
+    name = icon.removeprefix("mdi:")
+    svg = _icon_svg_cache.get(name)
+    if not svg:
+        return ""
+    extra = 'class="icon" width="' + str(size) + '" height="' + str(size) + '"'
+    if 'fill="currentColor"' not in svg and 'fill="none"' not in svg:
+        extra += ' fill="currentColor"'
+    svg = svg.replace("<svg", "<svg " + extra, 1)
+    return svg
 
 
-@register("line")
-def _render_line(w: Widget, indent: int) -> str:
-    points = w.get("points", [])
-    if not points or not isinstance(points, list):
-        points = [0, 0, 100, 0]
+def _entity_icon(entity_id: str, config_icon: str) -> str:
+    if config_icon:
+        return config_icon
+    if entity_id in _entity_icons:
+        return _entity_icons[entity_id]
+    domain = entity_id.split(".")[0] if "." in entity_id else ""
+    return _DEFAULT_ICONS.get(domain, "")
 
-    color = _color_to_css(w.get("line_color", "0xFFFFFF"))
-    width_val = int(w.get("line_width", 2))
 
-    pts = []
-    for i in range(0, len(points) - 1, 2):
-        pts.append(str(points[i]) + "," + str(points[i + 1]))
-    points_str = " ".join(pts) if pts else "0,0 100,0"
+def _js_obj(**kwargs) -> str:
+    items = []
+    for k, v in kwargs.items():
+        if isinstance(v, str):
+            items.append(f"{k}: '{v}'")
+        elif isinstance(v, (int, float)):
+            items.append(f"{k}: {v}")
+        elif v is None:
+            items.append(f"{k}: null")
+        elif isinstance(v, bool):
+            items.append(f"{k}: {'true' if v else 'false'}")
+        elif isinstance(v, (dict, list)):
+            items.append(f"{k}: {json.dumps(v)}")
+    return "js:{" + ", ".join(items) + "}"
 
-    linecap = ' stroke-linecap="round" stroke-linejoin="round"' if w.get("line_rounded", False) else ""
 
-    max_x, max_y = 200, 50
-    nums = [p for p in points if isinstance(p, (int, float))]
-    if len(nums) >= 2:
-        max_x = max(nums[::2]) + 20 if len(nums[::2]) > 0 else 200
-        max_y = max(nums[1::2]) + 20 if len(nums[1::2]) > 0 else 50
+def _tap_action_attrs(card: Card) -> Dict[str, str]:
+    raw = card.get("tap_action")
+    if not raw or not isinstance(raw, dict):
+        return {}
+    a = Action(**{k: v for k, v in raw.items() if k in Action.__dataclass_fields__})
+    if a.action == "toggle":
+        eid = card.get("entity", "")
+        domain = eid.split(".")[0] if "." in eid else ""
+        svc = _domain_toggle_service(domain)
+        return {
+            "hx-post": "/action",
+            "hx-trigger": "click",
+            "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
+            "hx-swap": "none",
+        }
+    if a.action == "call-service":
+        target = a.target or {}
+        return {
+            "hx-post": "/action",
+            "hx-trigger": "click",
+            "hx-vals": _js_obj(action="call-service", service=a.service, target=target, data=a.data or {}),
+            "hx-swap": "none",
+        }
+    if a.action == "navigate":
+        return {"hx-get": "/view/" + html.escape(a.navigation_path), "hx-target": "body", "hx-push-url": "true", "hx-trigger": "click"}
+    if a.action == "url":
+        return {"onclick": "window.open('" + html.escape(a.url_path) + "','_blank')"}
+    return {}
 
-    svg = (
-        '<svg width="' + str(max_x) + '" height="' + str(max_y) + '" viewBox="0 0 ' + str(max_x) + " " + str(max_y) + '">'
-        + '<polyline stroke="' + html.escape(color) + '" stroke-width="' + str(width_val) + '" fill="none"' + linecap
-        + ' points="' + html.escape(points_str) + '"/>'
-        + '</svg>'
+
+def _action_attrs(entity_id: str, action: str) -> Dict[str, str]:
+    service = ""
+    if action == "toggle" and entity_id:
+        domain = entity_id.split(".")[0] if "." in entity_id else ""
+        service = _domain_toggle_service(domain)
+    return {
+        "hx-post": "/action",
+        "hx-trigger": "click",
+        "hx-vals": _js_obj(entity_id=entity_id, action=action, service=service),
+        "hx-swap": "none",
+    }
+
+
+def _domain_toggle_service(domain: str) -> str:
+    mapping = {
+        "light": "light.toggle",
+        "switch": "switch.toggle",
+        "fan": "fan.toggle",
+        "cover": "cover.toggle",
+        "lock": "lock.lock",
+        "input_boolean": "input_boolean.toggle",
+        "scene": "scene.turn_on",
+        "script": "script.turn_on",
+        "automation": "automation.toggle",
+        "climate": "climate.toggle",
+        "media_player": "media_player.media_play_pause",
+    }
+    return mapping.get(domain, domain + ".toggle")
+
+
+_BINARY_DOMAINS = frozenset({
+    "light", "switch", "fan", "input_boolean", "cover",
+    "lock", "scene", "script", "automation",
+})
+
+
+def _is_binary_domain(entity_id: str) -> bool:
+    domain = entity_id.split(".")[0] if "." in entity_id else ""
+    return domain in _BINARY_DOMAINS
+
+
+def _color_icon(color: str) -> str:
+    if not color:
+        return ""
+    color_map = {
+        "yellow": "#FFB300",
+        "orange": "#FF6D00",
+        "red": "#D32F2F",
+        "pink": "#E91E63",
+        "purple": "#9C27B0",
+        "blue": "#2196F3",
+        "green": "#4CAF50",
+        "teal": "#009688",
+    }
+    return color_map.get(color.lower(), color)
+
+
+# ---- Card Renderers -------------------------------------------------------
+
+
+@register("placeholder")
+def _render_placeholder(card: Card, indent: int = 2) -> str:
+    return _h("div", {"class": "ha-card placeholder-card"}, "?", indent)
+
+
+@register("heading")
+def _render_heading(card: Card, indent: int = 2) -> str:
+    text = html.escape(card.get("heading", ""))
+    icon = _icon_html(card.get("icon", ""), 20)
+    content = icon + '<h2 class="heading-text">' + text + "</h2>" if icon else '<h2 class="heading-text">' + text + "</h2>"
+    return _h("div", {"class": "heading-card"}, content, indent)
+
+
+@register("markdown")
+def _render_markdown(card: Card, indent: int = 2) -> str:
+    content = card.get("content", "")
+    rendered = _render_markdown_text(content)
+    return _h("div", {"class": "ha-card markdown-card"}, rendered, indent)
+
+
+@register("entity")
+def _render_entity(card: Card, indent: int = 2) -> str:
+    eid = card.get("entity", "")
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 20)
+    state_span = _entity_span(eid, indent=indent + 2)
+    icon_cell = '<div class="entity-icon">' + icon + "</div>" if icon else ""
+    attrs = {"class": "ha-card entity-card"}
+    ta = _tap_action_attrs(card)
+    attrs.update(ta)
+    content = (
+        '\n' + _SP * (indent + 1) + '<div class="entity-row">\n'
+        + _SP * (indent + 2) + icon_cell + '\n'
+        + _SP * (indent + 2) + '<div class="entity-info">\n'
+        + _SP * (indent + 3) + '<div class="entity-name">' + name + '</div>\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
+    )
+    return _h("div", attrs, content, indent)
+
+
+@register("entities")
+def _render_entities(card: Card, indent: int = 2) -> str:
+    title = html.escape(card.get("title", ""))
+    raw_entities = card.get("entities", [])
+    rows = ""
+    for i, ent in enumerate(raw_entities):
+        if isinstance(ent, str):
+            eid = ent
+            ename = _friendly_name(eid)
+            eicon = ""
+        elif isinstance(ent, dict):
+            eid = ent.get("entity", "")
+            ename = ent.get("name", _friendly_name(eid))
+            eicon = ent.get("icon", "")
+        else:
+            continue
+        icon = _icon_html(_entity_icon(eid, eicon), 18)
+        state_span = _entity_span(eid, indent=indent + 3)
+        type_attr = ent.get("type", "") if isinstance(ent, dict) else ""
+        divider = ""
+        if type_attr == "divider":
+            rows += _SP * (indent + 1) + '<hr class="entities-divider">\n'
+            continue
+        if type_attr == "section":
+            section = html.escape(ent.get("name", "") if isinstance(ent, dict) else "")
+            rows += _SP * (indent + 1) + '<div class="entities-section-header">' + section + '</div>\n'
+            continue
+        row_controls = _render_cover_controls(eid, indent + 2) or _render_entity_toggle(eid, indent + 2)
+        rows += (
+            _SP * (indent + 1) + '<div class="entity-row">\n'
+            + _SP * (indent + 2) + '<div class="entity-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="entity-info">\n'
+            + _SP * (indent + 3) + '<div class="entity-name">' + html.escape(ename) + '</div>\n'
+            + _SP * (indent + 3) + state_span + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + row_controls
+            + _SP * (indent + 1) + '</div>\n'
+        )
+
+    header = ""
+    if title:
+        header = _SP * (indent + 1) + '<div class="entities-header">' + title + '</div>\n'
+
+    content = "\n" + header + rows + _SP * indent
+    return _h("div", {"class": "ha-card entities-card"}, content, indent)
+
+
+@register("glance")
+def _render_glance(card: Card, indent: int = 2) -> str:
+    title = html.escape(card.get("title", ""))
+    columns = card.get("columns", 3)
+    raw_entities = card.get("entities", [])
+    items = ""
+    for ent in raw_entities:
+        if isinstance(ent, str):
+            eid = ent
+            ename = _friendly_name(eid)
+            eicon = ""
+        elif isinstance(ent, dict):
+            eid = ent.get("entity", "")
+            ename = ent.get("name", _friendly_name(eid))
+            eicon = ent.get("icon", "")
+        else:
+            continue
+        icon = _icon_html(_entity_icon(eid, eicon), 20)
+        state_span = _entity_span(eid, indent=indent + 3)
+        ta_attrs = ""
+        if isinstance(ent, dict) and ent.get("tap_action"):
+            e_card = Card(type="glance_item", config=ent)
+            ta = _tap_action_attrs(e_card)
+            ta_attrs = _build_attrs(ta)
+        items += (
+            _SP * (indent + 1) + '<div class="glance-item"' + ta_attrs + '>\n'
+            + _SP * (indent + 2) + '<div class="glance-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="glance-name">' + html.escape(ename) + '</div>\n'
+            + _SP * (indent + 2) + state_span + '\n'
+            + _SP * (indent + 1) + '</div>\n'
+        )
+
+    header = ""
+    if title:
+        header = _SP * (indent + 1) + '<div class="glance-header">' + title + '</div>\n'
+
+    content = "\n" + header + items + _SP * indent
+    return _h("div", {"class": "ha-card glance-card", "style": "--cols: " + str(columns)}, content, indent)
+
+
+@register("button")
+def _render_button(card: Card, indent: int = 2) -> str:
+    name = html.escape(card.get("name", card.get("entity", "Action")))
+    eid = card.get("entity", "")
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 28)
+    ta_attrs = _tap_action_attrs(card)
+
+    if not ta_attrs and card.get("entity"):
+        ta_attrs = _action_attrs(card.get("entity", ""), "toggle")
+
+    content = (
+        '\n' + _SP * (indent + 1) + '<button class="button-content"' + _build_attrs(ta_attrs) + '>\n'
+        + _SP * (indent + 2) + '<div class="button-icon">' + icon + '</div>\n'
+        + _SP * (indent + 2) + '<div class="button-name">' + name + '</div>\n'
+        + _SP * (indent + 1) + '</button>\n'
+        + _SP * indent
+    )
+    return _h("div", {"class": "ha-card button-card"}, content, indent)
+
+
+@register("tile")
+def _render_tile(card: Card, indent: int = 2) -> str:
+    eid = card.get("entity", "")
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 24)
+    color = _color_icon(card.get("color", ""))
+    vertical = card.get("vertical", False)
+    hide_state = card.get("hide_state", False)
+    features_inline = card.get("features_position", "") == "inline"
+
+    attrs: Dict[str, str] = {"class": "ha-card tile-card"}
+    if color:
+        attrs["style"] = "--tile-color: " + color
+
+    is_binary = _is_binary_domain(eid)
+    state_html = ""
+    if is_binary and not hide_state:
+        dom = eid.split(".")[0] if "." in eid else ""
+        svc = _domain_toggle_service(dom)
+        toggle_attrs = {
+            "hx-post": "/action",
+            "hx-trigger": "change",
+            "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
+            "hx-swap": "none",
+        }
+        state_html = (
+            '<label class="toggle-switch" onclick="event.stopPropagation()">'
+            '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>'
+            '<span class="toggle-slider"></span>'
+            '</label>'
+            + _entity_span(eid, indent=indent + 2)
+        )
+    elif not hide_state:
+        state_html = _entity_span(eid, indent=indent + 2)
+
+    ta_attrs = _tap_action_attrs(card)
+
+    if not ta_attrs:
+        ta_attrs = _action_attrs(eid, "toggle")
+
+    tc_class = "tile-content" + (" vertical" if vertical else "")
+
+    has_features = bool(card.get("features"))
+    features_html = ""
+    if has_features:
+        features_html = "\n" + _render_features(card, indent + 1) + "\n" + _SP * indent
+
+    if features_inline and has_features:
+        inline_html = _render_features(card, indent + 3, inline=True)
+        content = (
+            '\n'
+            + _SP * (indent + 1) + '<div class="' + tc_class + '"' + _build_attrs(ta_attrs) + '>\n'
+            + _SP * (indent + 2) + '<div class="tile-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="tile-info tile-info-inline">\n'
+            + _SP * (indent + 3) + '<div class="tile-name">' + name + '</div>\n'
+            + inline_html + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + _SP * (indent + 1) + '</div>\n'
+            + _SP * indent
+        )
+    else:
+        content = (
+            '\n'
+            + _SP * (indent + 1) + '<div class="' + tc_class + '"' + _build_attrs(ta_attrs) + '>\n'
+            + _SP * (indent + 2) + '<div class="tile-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="tile-info">\n'
+            + _SP * (indent + 3) + '<div class="tile-name">' + name + '</div>\n'
+            + _SP * (indent + 3) + state_html + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + _SP * (indent + 1) + '</div>\n'
+            + features_html
+            + _SP * indent
+        )
+    return _h("div", attrs, content, indent)
+
+
+def _render_features(card: Card, indent: int, inline: bool = False) -> str:
+    features = card.get("features", [])
+    if not features or not isinstance(features, list):
+        return ""
+    if inline:
+        html_out = ""
+    else:
+        html_out = _SP * indent + '<div class="tile-features">\n'
+    for f in features:
+        ftype = f.get("type", "")
+        if ftype == "light-brightness":
+            eid = card.get("entity", "")
+            html_out += (
+                _SP * (indent + 1) + '<div class="feature-row">\n'
+                + _SP * (indent + 2) + '<span class="feature-label">Brightness</span>\n'
+                + _SP * (indent + 2) + '<input type="range" class="feature-slider" min="0" max="100" '
+                + _build_attrs({
+                    "hx-post": "/action",
+                    "hx-trigger": "change",
+                    "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
+                    "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
+                    "hx-swap": "none",
+                }) + '>\n'
+                + _SP * (indent + 1) + '</div>\n'
+            )
+        elif ftype == "light-color-temp":
+            eid = card.get("entity", "")
+            html_out += (
+                _SP * (indent + 1) + '<div class="feature-row">\n'
+                + _SP * (indent + 2) + '<span class="feature-label">Color Temp</span>\n'
+                + _SP * (indent + 2) + '<input type="range" class="feature-slider" min="153" max="500" '
+                + _build_attrs({
+                    "hx-post": "/action",
+                    "hx-trigger": "change",
+                    "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
+                    "hx-vals-js": '{"data": {"color_temp": parseInt(event.target.value)}}',
+                    "hx-swap": "none",
+                }) + '>\n'
+                + _SP * (indent + 1) + '</div>\n'
+            )
+        elif ftype == "numeric-input":
+            eid = card.get("entity", "")
+            dec_attrs = {
+                "hx-post": "/action",
+                "hx-trigger": "click",
+                "hx-vals": _js_obj(entity_id=eid, action="call-service", service="input_number.decrement"),
+                "hx-swap": "none",
+            }
+            inc_attrs = {
+                "hx-post": "/action",
+                "hx-trigger": "click",
+                "hx-vals": _js_obj(entity_id=eid, action="call-service", service="input_number.increment"),
+                "hx-swap": "none",
+            }
+            html_out += (
+                _SP * (indent + 1) + '<div class="feature-row">\n'
+                + _SP * (indent + 2) + '<div class="numeric-input">\n'
+                + _SP * (indent + 3) + _h("button", {"class": "num-btn", "aria-label": "Decrement", **dec_attrs}, "−") + '\n'
+                + _SP * (indent + 3) + _entity_span(eid, indent=indent + 3) + '\n'
+                + _SP * (indent + 3) + _h("button", {"class": "num-btn", "aria-label": "Increment", **inc_attrs}, "+") + '\n'
+                + _SP * (indent + 2) + '</div>\n'
+                + _SP * (indent + 1) + '</div>\n'
+            )
+    if not inline:
+        html_out += _SP * indent + "</div>\n"
+    return html_out
+
+
+def _render_cover_controls(entity_id: str, indent: int) -> str:
+    if not entity_id or "." not in entity_id:
+        return ""
+    dom = entity_id.split(".")[0]
+    if dom != "cover":
+        return ""
+    eid = html.escape(entity_id)
+    html_out = _SP * indent + '<div class="cover-controls">\n'
+    for label, svc, aria in [("▲", "cover.open_cover", "Open"), ("⏹", "cover.stop_cover", "Stop"), ("▼", "cover.close_cover", "Close")]:
+        attrs = {
+            "hx-post": "/action",
+            "hx-trigger": "click",
+            "hx-vals": _js_obj(entity_id=entity_id, action="call-service", service=svc),
+            "hx-swap": "none",
+            "class": "cover-btn",
+            "aria-label": aria,
+        }
+        html_out += _SP * (indent + 1) + _h("button", attrs, label, 0) + "\n"
+    html_out += _SP * indent + "</div>\n"
+    return html_out
+
+
+def _render_entity_toggle(entity_id: str, indent: int) -> str:
+    if not entity_id or "." not in entity_id:
+        return ""
+    if not _is_binary_domain(entity_id):
+        return ""
+    dom = entity_id.split(".")[0]
+    if dom == "cover":
+        return ""
+    svc = _domain_toggle_service(dom)
+    toggle_attrs = {
+        "hx-post": "/action",
+        "hx-trigger": "change",
+        "hx-vals": _js_obj(entity_id=entity_id, action="toggle", service=svc),
+        "hx-swap": "none",
+    }
+    html_out = _SP * indent + '<div class="entity-toggle" onclick="event.stopPropagation()">\n'
+    html_out += _SP * (indent + 1) + '<label class="toggle-switch">\n'
+    html_out += _SP * (indent + 2) + '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>\n'
+    html_out += _SP * (indent + 2) + '<span class="toggle-slider"></span>\n'
+    html_out += _SP * (indent + 1) + '</label>\n'
+    html_out += _SP * indent + '</div>\n'
+    return html_out
+
+
+@register("grid")
+def _render_grid(card: Card, indent: int = 2) -> str:
+    columns = card.get("columns", 2)
+    raw_cards = card.get("cards", [])
+    children = ""
+    for c in raw_cards:
+        if isinstance(c, dict):
+            children += "\n" + _render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}), indent + 1)
+    if children:
+        children += "\n" + _SP * indent
+    return _h("div", {"class": "ha-card grid-card", "style": "--cols: " + str(columns)}, children, indent)
+
+
+@register("horizontal-stack")
+def _render_hstack(card: Card, indent: int = 2) -> str:
+    raw_cards = card.get("cards", [])
+    children = ""
+    for c in raw_cards:
+        if isinstance(c, dict):
+            children += "\n" + _render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}), indent + 1)
+    if children:
+        children += "\n" + _SP * indent
+    return _h("div", {"class": "ha-card hstack-card"}, children, indent)
+
+
+@register("vertical-stack")
+def _render_vstack(card: Card, indent: int = 2) -> str:
+    raw_cards = card.get("cards", [])
+    children = ""
+    for c in raw_cards:
+        if isinstance(c, dict):
+            children += "\n" + _render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}), indent + 1)
+    if children:
+        children += "\n" + _SP * indent
+    return _h("div", {"class": "ha-card vstack-card"}, children, indent)
+
+
+@register("conditional")
+def _render_conditional(card: Card, indent: int = 2) -> str:
+    conditions = card.get("conditions", [])
+    raw_card = card.get("card", {})
+    if not isinstance(raw_card, dict):
+        return _render_placeholder(card, indent)
+
+    child = _render_card(Card(type=raw_card.get("type", ""), config={k: v for k, v in raw_card.items() if k != "type"}), indent + 1)
+
+    cond_json = html.escape(json.dumps(conditions))
+    cond_id = "cond-" + str(hash(json.dumps(conditions, sort_keys=True)) & 0xFFFFFFFF)
+
+    attrs = {
+        "class": "conditional-card",
+        "id": cond_id,
+        "data-conditions": cond_json,
+    }
+
+    content = "\n" + _SP * (indent + 1) + child + "\n" + _SP * indent
+    return _h("div", attrs, content, indent)
+
+
+@register("light")
+def _render_light(card: Card, indent: int = 2) -> str:
+    eid = card.get("entity", "")
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 24)
+    state_span = _entity_span(eid, indent=indent + 2)
+
+    toggle_attrs = _action_attrs(eid, "toggle")
+
+    content = (
+        '\n'
+        + _SP * (indent + 1) + '<div class="light-content">\n'
+        + _SP * (indent + 2) + '<div class="light-icon"' + _build_attrs(toggle_attrs) + '>' + icon + '</div>\n'
+        + _SP * (indent + 2) + '<div class="light-info">\n'
+        + _SP * (indent + 3) + '<div class="light-name">' + name + '</div>\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 2) + '<input type="range" class="light-slider" min="0" max="100" value="0" '
+        + _build_attrs({
+            "hx-post": "/action",
+            "hx-trigger": "change",
+            "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
+            "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
+            "hx-swap": "none",
+        }) + '>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
+    )
+    return _h("div", {"class": "ha-card light-card"}, content, indent)
+
+
+@register("sensor")
+def _render_sensor(card: Card, indent: int = 2) -> str:
+    eid = card.get("entity", "")
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 20)
+    state_span = _entity_span(eid, indent=indent + 2)
+    graph_type = card.get("graph", "")
+
+    content = (
+        '\n'
+        + _SP * (indent + 1) + '<div class="sensor-content">\n'
+        + _SP * (indent + 2) + '<div class="sensor-icon">' + icon + '</div>\n'
+        + _SP * (indent + 2) + '<div class="sensor-info">\n'
+        + _SP * (indent + 3) + '<div class="sensor-name">' + name + '</div>\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
     )
 
-    attrs = _common_attrs(w)
-    wrapper_attrs: Dict[str, str] = {"class": "lv-line"}
-    style_attr = attrs.get("style", "")
-    if style_attr:
-        wrapper_attrs["style"] = style_attr
+    graph_html = ""
+    if graph_type:
+        hours = card.get("hours_to_show", 24)
+        graph_html = '\n' + _SP * (indent + 1) + '<div class="sensor-graph" data-entity="' + html.escape(eid) + '" data-hours="' + str(hours) + '"></div>\n' + _SP * indent
 
-    s1 = _SP * (indent + 1)
-    content = "\n" + s1 + svg + "\n" + _SP * indent
-    return _h("div", wrapper_attrs, content, indent)
+    return _h("div", {"class": "ha-card sensor-card"}, "\n" + content + graph_html, indent)
+
+
+@register("history-graph")
+def _render_history_graph(card: Card, indent: int = 2) -> str:
+    title = html.escape(card.get("title", ""))
+    raw_entities = card.get("entities", [])
+    hours = card.get("hours_to_show", 24)
+
+    eids = []
+    for ent in raw_entities:
+        if isinstance(ent, str):
+            eids.append(ent)
+        elif isinstance(ent, dict):
+            eids.append(ent.get("entity", ""))
+
+    header = ""
+    if title:
+        header = '\n' + _SP * (indent + 1) + '<div class="graph-header">' + title + '</div>'
+
+    chart_data = html.escape(json.dumps({"entities": eids, "hours": hours}))
+    chart_div = '\n' + _SP * (indent + 1) + '<div class="history-graph" data-chart=\'' + chart_data + '\'></div>\n' + _SP * indent
+
+    content = header + chart_div
+    return _h("div", {"class": "ha-card graph-card"}, content, indent)
+
+
+@register("gauge")
+def _render_gauge(card: Card, indent: int = 2) -> str:
+    eid = card.get("entity", "")
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    min_v = card.get("min", 0)
+    max_v = card.get("max", 100)
+    severity = card.get("severity", {})
+
+    state_span = _entity_span(eid, indent=indent + 2)
+    attrs = {
+        "class": "ha-card gauge-card",
+        "data-min": str(min_v),
+        "data-max": str(max_v),
+    }
+    if severity:
+        attrs["data-severity"] = html.escape(json.dumps(severity))
+
+    content = (
+        '\n'
+        + _SP * (indent + 1) + '<div class="gauge-content">\n'
+        + _SP * (indent + 2) + '<div class="gauge-value">\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 2) + '<div class="gauge-name">' + name + '</div>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
+    )
+    return _h("div", attrs, content, indent)
+
+
+@register("iframe")
+def _render_iframe(card: Card, indent: int = 2) -> str:
+    url = html.escape(card.get("url", ""))
+    aspect = card.get("aspect_ratio", "50%")
+    style = "aspect-ratio: " + html.escape(str(aspect))
+    content = '\n' + _SP * (indent + 1) + '<iframe src="' + url + '" style="' + style + ';width:100%;border:none"></iframe>\n' + _SP * indent
+    return _h("div", {"class": "ha-card iframe-card"}, content, indent)
+
+
+@register("clock")
+def _render_clock(card: Card, indent: int = 2) -> str:
+    tz = card.get("time_zone", "Europe/London")
+    fmt = card.get("time_format", "24")
+    sec = card.get("show_seconds", False)
+    size = card.get("clock_size", "medium")
+    no_bg = card.get("no_background", False)
+
+    size_class = f"clock-size-{size}"
+    attrs = {"class": f"ha-card clock-card {size_class}"}
+    if no_bg:
+        attrs["class"] += " clock-no-bg"
+
+    clock_id = f"c{abs(hash(tz+fmt+str(sec)))%99999999}"
+
+    content = (
+        '\n'
+        + _SP * (indent + 1)
+        + f'<div class="clock-digital" id="{clock_id}"'
+        + f' data-tz="{html.escape(tz)}"'
+        + f' data-fmt="{html.escape(fmt)}"'
+        + (' data-sec="1"' if sec else '')
+        + '>--:--</div>\n'
+        + _SP * indent
+    )
+    return _h("div", attrs, content, indent)
+
+
+# ---- Helpers --------------------------------------------------------------
+
+
+def _friendly_name(entity_id: str) -> str:
+    parts = entity_id.split(".")
+    if len(parts) < 2:
+        return entity_id
+    raw = parts[1].replace("_", " ").replace("-", " ")
+    return raw.title()
+
+
+def _render_markdown_text(text: str) -> str:
+    lines = text.split("\n")
+    html_out = ""
+    in_list = False
+    for line in lines:
+        m = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if m:
+            level = len(m.group(1))
+            html_out += f"<h{level}>{_inline_md(m.group(2))}</h{level}>\n"
+            continue
+        m = re.match(r"^[\-\*]\s+(.+)$", line)
+        if m:
+            if not in_list:
+                html_out += "<ul>\n"
+                in_list = True
+            html_out += "<li>" + _inline_md(m.group(1)) + "</li>\n"
+            continue
+        if in_list:
+            html_out += "</ul>\n"
+            in_list = False
+        if not line.strip():
+            continue
+        m = re.match(r"^(\d+)\.\s+(.+)$", line)
+        if m:
+            html_out += "<p>" + _inline_md(m.group(2)) + "</p>\n"
+            continue
+        html_out += "<p>" + _inline_md(line) + "</p>\n"
+    if in_list:
+        html_out += "</ul>\n"
+
+    html_out = html_out.replace("&", "&amp;")
+    html_out = html_out.replace("<strong>", "\x00strong\x00")
+    html_out = html_out.replace("</strong>", "\x01strong\x01")
+    html_out = html_out.replace("<em>", "\x00em\x00")
+    html_out = html_out.replace("</em>", "\x01em\x01")
+    html_out = html_out.replace("<code>", "\x00code\x00")
+    html_out = html_out.replace("</code>", "\x01code\x01")
+    html_out = html_out.replace("<a ", "\x00a\x00")
+    html_out = html_out.replace("</a>", "\x01a\x01")
+    html_out = html_out.replace("<", "&lt;").replace(">", "&gt;")
+    html_out = html_out.replace("\x00strong\x00", "<strong>")
+    html_out = html_out.replace("\x01strong\x01", "</strong>")
+    html_out = html_out.replace("\x00em\x00", "<em>")
+    html_out = html_out.replace("\x01em\x01", "</em>")
+    html_out = html_out.replace("\x00code\x00", "<code>")
+    html_out = html_out.replace("\x01code\x01", "</code>")
+    html_out = html_out.replace("\x00a\x00", "<a ")
+    html_out = html_out.replace("\x01a\x01", "</a>")
+
+    return html_out
+
+
+def _inline_md(text: str) -> str:
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2" target="_blank">\1</a>', text)
+    return text

@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -10,9 +10,8 @@ class AppConfig:
     ha_token: str = ""
     host: str = "0.0.0.0"
     port: int = 8000
-    config_path: Path = Path("config/dashboard.yaml")
-    display_width: int = 800
-    display_height: int = 480
+    dashboard_path: str = "lovelace"
+    config_path: Optional[Path] = None
     reload: bool = True
 
     @classmethod
@@ -22,13 +21,16 @@ class AppConfig:
             load_dotenv()
         except ImportError:
             pass
+
+        cfg_path_str = os.getenv("CONFIG_PATH", "")
+        cfg_path = Path(cfg_path_str) if cfg_path_str else None
+
         return cls(
             ha_url=os.getenv("HA_URL", ""),
             ha_token=os.getenv("HA_TOKEN", ""),
             host=os.getenv("HOST", "0.0.0.0"),
             port=int(os.getenv("PORT", "8000")),
-            config_path=Path(os.getenv("CONFIG_PATH", "config/dashboard.yaml")),
-            display_width=int(os.getenv("DISPLAY_WIDTH", "800")),
-            display_height=int(os.getenv("DISPLAY_HEIGHT", "480")),
+            dashboard_path=os.getenv("DASHBOARD_PATH", "lovelace"),
+            config_path=cfg_path,
             reload=os.getenv("RELOAD", "true").lower() == "true",
         )

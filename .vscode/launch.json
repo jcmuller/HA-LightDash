@@ -14,11 +14,6 @@
             ],
             "jinja": true,
             "envFile": "${workspaceFolder}/.env",
-            "env": {
-                "CONFIG_PATH": "config/living_room.yaml",
-                "DISPLAY_WIDTH": "480",
-                "DISPLAY_HEIGHT": "480"
-            },
             "cwd": "${workspaceFolder}"
         }
     ]
