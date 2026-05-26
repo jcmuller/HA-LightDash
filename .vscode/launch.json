@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "LightDash",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "app.main:app",
+                "--reload",
+                "--host", "0.0.0.0",
+                "--port", "8000"
+            ],
+            "jinja": true,
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "CONFIG_PATH": "config/living_room.yaml",
+                "DISPLAY_WIDTH": "480",
+                "DISPLAY_HEIGHT": "480"
+            },
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

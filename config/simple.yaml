@@ -1,0 +1,192 @@
+display:
+  - platform: dummy
+    dimensions:
+      width: 800
+      height: 480
+
+lvgl:
+  bg_color: 0x1a1a2e
+
+  pages:
+    - id: main
+      title: Living Room
+      widgets:
+        - label:
+            id: header
+            text: Living Room
+            text_color: 0xFFFFFF
+            text_font: montserrat_24
+            align: TOP_MID
+
+        - obj:
+            layout:
+              type: flex
+              flex_flow: ROW
+              flex_align_main: SPACE_EVENLY
+              flex_align_cross: CENTER
+            width: 100%
+            pad_all: 8
+            widgets:
+              - button:
+                  id: btn_lights
+                  text: "\U0001F4A1 Lights"
+                  bg_color: 0x2F8CD8
+                  width: 130
+                  on_click:
+                    then:
+                      - homeassistant.service:
+                          service: light.toggle
+                          target:
+                            entity_id: light.living_room
+              - button:
+                  id: btn_blinds
+                  text: "\U0001F4AA Blinds"
+                  bg_color: 0x005782
+                  width: 130
+                  on_click:
+                    then:
+                      - homeassistant.service:
+                          service: cover.toggle
+                          target:
+                            entity_id: cover.living_room
+              - button:
+                  id: btn_music
+                  text: "\U0001F3B5 Music"
+                  bg_color: 0x5C2F8C
+                  width: 130
+                  on_click:
+                    then:
+                      - homeassistant.service:
+                          service: media_player.toggle
+                          target:
+                            entity_id: media_player.living_room
+
+        - obj:
+            layout:
+              type: flex
+              flex_flow: ROW
+              flex_align_main: SPACE_BETWEEN
+            width: 100%
+            pad_all: 8
+            widgets:
+              - obj:
+                  layout:
+                    type: flex
+                    flex_flow: COLUMN
+                    flex_align_cross: CENTER
+                  flex_grow: 1
+                  widgets:
+                    - label:
+                        text: "\U0001F321\uFE0F Temperature"
+                        text_align: CENTER
+                    - label:
+                        id: sensor.temperature
+                        text: "22.5\u00B0C"
+                        text_font: montserrat_30
+                        text_align: CENTER
+                        text_color: 0xFF6B6B
+              - obj:
+                  layout:
+                    type: flex
+                    flex_flow: COLUMN
+                    flex_align_cross: CENTER
+                  flex_grow: 1
+                  widgets:
+                    - label:
+                        text: "\U0001F4A7 Humidity"
+                        text_align: CENTER
+                    - label:
+                        id: sensor.humidity
+                        text: "45%"
+                        text_font: montserrat_30
+                        text_align: CENTER
+                        text_color: 0x4FC3F7
+
+        - obj:
+            layout:
+              type: flex
+              flex_flow: ROW
+              flex_align_main: SPACE_BETWEEN
+              flex_align_cross: CENTER
+            width: 100%
+            pad_all: 8
+            widgets:
+              - label:
+                  text: Dimmer
+              - slider:
+                  id: light.living_room_dimmer
+                  width: 220
+                  min: 0
+                  max: 100
+                  value: 65
+                  on_value:
+                    then:
+                      - homeassistant.service:
+                          service: light.turn_on
+                          target:
+                            entity_id: light.living_room
+                          data:
+                            brightness_pct: x
+
+        - obj:
+            layout:
+              type: flex
+              flex_flow: ROW
+              flex_align_main: SPACE_BETWEEN
+              flex_align_cross: CENTER
+            width: 100%
+            pad_all: 8
+            widgets:
+              - label:
+                  text: AC
+              - switch:
+                  id: climate.living_room
+                  text: "Off"
+                  on_click:
+                    then:
+                      - homeassistant.service:
+                          service: climate.toggle
+                          target:
+                            entity_id: climate.living_room
+
+        - obj:
+            layout:
+              type: flex
+              flex_flow: ROW
+              flex_align_main: SPACE_EVENLY
+              flex_align_cross: CENTER
+            width: 100%
+            pad_all: 8
+            widgets:
+              - arc:
+                  id: temp_arc
+                  width: 100
+                  height: 100
+                  value: 72
+                  min: 0
+                  max: 100
+              - bar:
+                  id: hum_bar
+                  width: 24
+                  height: 80
+                  value: 45
+                  min: 0
+                  max: 100
+                  bg_color: 0x333333
+                  text_color: 0x4FC3F7
+              - led:
+                  id: status_led
+                  color: 0x00FF00
+                  brightness: 255
+              - spinner:
+                  id: loading_spinner
+                  width: 28
+                  height: 28
+
+        - checkbox:
+            id: notify_check
+            text: Notifications enabled
+            checked: true
+            on_change:
+              then:
+                - logger.log: notifications toggled
