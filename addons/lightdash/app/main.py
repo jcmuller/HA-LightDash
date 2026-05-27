@@ -318,6 +318,7 @@ async def api_history(entity_id: str, hours: int = 24):
 # ── Config editor ──────────────────────────────────────────────────────────
 
 _NEW_DASHBOARD_TEMPLATE = """\
+title: {name}
 views:
   - title: Home
     path: home
@@ -782,13 +783,14 @@ async def config_create(req: Request):
     if file_path.exists():
         return JSONResponse({"error": f"Dashboard '{name}' already exists"}, status_code=409)
 
+    yaml_text = _NEW_DASHBOARD_TEMPLATE.format(name=name)
     try:
-        AppConfig.flush_dashboard_to_disk(name, _NEW_DASHBOARD_TEMPLATE, is_addon, config_dir)
+        AppConfig.flush_dashboard_to_disk(name, yaml_text, is_addon, config_dir)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
     dashboards = getattr(app.state, "dashboards", {})
-    parsed = parse_dashboard(yaml.safe_load(_NEW_DASHBOARD_TEMPLATE))
+    parsed = parse_dashboard(yaml.safe_load(yaml_text))
     dashboards[name] = parsed
 
     bp = _bp()
