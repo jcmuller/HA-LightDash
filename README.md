@@ -524,7 +524,7 @@ Before pushing changes, bump the version in `addons/lightdash/config.yaml`
 so Supervisor detects a new build:
 
 ```yaml
-version: "0.3.1"   # increment each push
+version: "0.3.2"   # increment each push
 ```
 
 Then commit and push to trigger a rebuild in Supervisor.

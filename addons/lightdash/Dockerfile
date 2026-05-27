@@ -6,7 +6,7 @@ RUN apk add --no-cache python3 py3-pip
 COPY requirements.txt /
 RUN pip3 install --no-cache-dir -r /requirements.txt --break-system-packages
 
-COPY app /app
+COPY app /app/app
 COPY run.sh /
 
 RUN chmod a+x /run.sh
