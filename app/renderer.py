@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.compat import JINJA_RE
 from app.models import Action, Card, Dashboard, Section, View
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ _DEFAULT_ICONS: Dict[str, str] = {
 }
 
 _entity_icons: Dict[str, str] = {}
+_entity_states: Dict[str, Any] = {}
 _ha_url: str = ""
 _dashboard_name: str = ""
 _base_path: str = ""
@@ -67,9 +69,10 @@ def register(type_name: str):
     return decorator
 
 
-def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons: Optional[dict] = None, dashboard_name: str = "") -> str:
-    global _entity_icons, _ha_url, _dashboard_name
+def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons: Optional[dict] = None, entity_states: Optional[dict] = None, dashboard_name: str = "") -> str:
+    global _entity_icons, _entity_states, _ha_url, _dashboard_name
     _entity_icons = entity_icons or {}
+    _entity_states = entity_states or {}
     _ha_url = ha_url or ""
     _dashboard_name = dashboard_name or ""
 
@@ -83,6 +86,10 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
         if img_url.startswith("/") and ha_url:
             img_url = ha_url.rstrip("/") + img_url
         bg += f"background-image: url('{html.escape(img_url)}');background-size: cover;background-position: center;"
+    if dashboard.lightdash.container_width:
+        bg += f"width: {dashboard.lightdash.container_width};"
+    if dashboard.lightdash.container_height:
+        bg += f"height: {dashboard.lightdash.container_height};overflow-y: auto;"
 
     needs_uplot = _view_needs_charts(view)
 
@@ -114,6 +121,26 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
             '});}\n'
             'document.addEventListener("htmx:afterSwap",st);\n'
             'document.addEventListener("htmx:sseMessage",st);\n'
+            '</script>\n'
+        )
+    if _view_needs_slider_sync(view):
+        state_api_url = _url("/api/state/")
+        head_extra += (
+            '<script>\n'
+            'function ss(e){'
+            'var s=e.detail.elt;'
+            'if(!s||!s.classList.contains("entity-state"))return;'
+            'var c=s.closest(".tile-card");'
+            'if(!c)return;'
+            'var r=c.querySelector(".feature-slider");'
+            'if(!r)return;'
+            'var eid=s.getAttribute("data-entity");'
+            'if(!eid)return;'
+            "fetch('" + state_api_url + "'+eid).then(function(resp){return resp.json()}).then(function(d){"
+            'if(d&&d.attributes&&d.attributes.brightness){r.value=Math.round(d.attributes.brightness/255*100);}'
+            '});'
+            '}\n'
+            'document.addEventListener("htmx:sseMessage",ss);\n'
             '</script>\n'
         )
     if _view_needs_clock(view):
@@ -303,6 +330,18 @@ def _view_needs_toggle_sync(view: View) -> bool:
     return False
 
 
+def _view_needs_slider_sync(view: View) -> bool:
+    check_cards = view.cards
+    if view.sections:
+        check_cards = [c for s in view.sections for c in s.cards]
+    for c in check_cards:
+        if c.type == "tile":
+            for f in (c.get("features") or []):
+                if isinstance(f, dict) and f.get("type") in ("light-brightness", "light-color-temp"):
+                    return True
+    return False
+
+
 def _view_needs_clock(view: View) -> bool:
     check_cards = view.cards
     if view.sections:
@@ -353,6 +392,7 @@ def _entity_span(entity_id: str, card_id: str = "", indent: int = 0) -> str:
     attrs: Dict[str, str] = {
         "class": "entity-state",
         "id": f"state-{sid}",
+        "data-entity": entity_id,
         "hx-get": _url(f"/api/value/{sid}"),
         "hx-trigger": "load",
         "hx-swap": "innerHTML",
@@ -548,6 +588,8 @@ def _render_heading(card: Card, indent: int = 2) -> str:
 @register("markdown")
 def _render_markdown(card: Card, indent: int = 2) -> str:
     content = card.get("content", "")
+    if JINJA_RE.search(content):
+        return _render_placeholder(card, indent)
     rendered = _render_markdown_text(content)
     return _h("div", {"class": "ha-card markdown-card"}, rendered, indent)
 
@@ -707,8 +749,9 @@ def _render_tile(card: Card, indent: int = 2) -> str:
         attrs["style"] = "--tile-color: " + color
 
     is_binary = _is_binary_domain(eid)
+    is_cover = eid.split(".")[0] == "cover" if "." in eid else False
     state_html = ""
-    if is_binary and not hide_state:
+    if is_binary and not hide_state and not is_cover:
         dom = eid.split(".")[0] if "." in eid else ""
         svc = _domain_toggle_service(dom)
         toggle_attrs = {
@@ -724,12 +767,14 @@ def _render_tile(card: Card, indent: int = 2) -> str:
             '</label>'
             + _entity_span(eid, indent=indent + 2)
         )
+    elif is_cover and not hide_state:
+        state_html = _entity_span(eid, indent=indent + 2)
     elif not hide_state:
         state_html = _entity_span(eid, indent=indent + 2)
 
     ta_attrs = _tap_action_attrs(card)
 
-    if not ta_attrs:
+    if not ta_attrs and eid and not is_cover:
         ta_attrs = _action_attrs(eid, "toggle")
 
     tc_class = "tile-content" + (" vertical" if vertical else "")
@@ -748,6 +793,20 @@ def _render_tile(card: Card, indent: int = 2) -> str:
             + _SP * (indent + 2) + '<div class="tile-info tile-info-inline">\n'
             + _SP * (indent + 3) + '<div class="tile-name">' + name + '</div>\n'
             + inline_html + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + _SP * (indent + 1) + '</div>\n'
+            + _SP * indent
+        )
+    elif is_cover and not hide_state:
+        cover_html = _render_cover_controls(eid, indent + 3)
+        content = (
+            '\n'
+            + _SP * (indent + 1) + '<div class="' + tc_class + '"' + _build_attrs(ta_attrs) + '>\n'
+            + _SP * (indent + 2) + '<div class="tile-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="tile-info tile-info-inline">\n'
+            + _SP * (indent + 3) + '<div class="tile-name">' + name + '</div>\n'
+            + _SP * (indent + 3) + state_html + '\n'
+            + cover_html + '\n'
             + _SP * (indent + 2) + '</div>\n'
             + _SP * (indent + 1) + '</div>\n'
             + _SP * indent
@@ -780,17 +839,28 @@ def _render_features(card: Card, indent: int, inline: bool = False) -> str:
         ftype = f.get("type", "")
         if ftype == "light-brightness":
             eid = card.get("entity", "")
+            state = _entity_states.get(eid, {})
+            brightness = state.get("attributes", {}).get("brightness", 0) if state.get("state") == "on" else 0
+            pct = round(brightness / 255 * 100) if brightness else 0
+            slider_attrs = {
+                "type": "range",
+                "class": "feature-slider",
+                "min": "0",
+                "max": "100",
+                "value": str(pct),
+                "hx-post": _url("/action"),
+                "hx-trigger": "change",
+                "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
+                "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
+                "hx-swap": "none",
+            }
+            label = ""
+            if not inline:
+                label = _SP * (indent + 2) + '<span class="feature-label">Brightness</span>\n'
             html_out += (
                 _SP * (indent + 1) + '<div class="feature-row">\n'
-                + _SP * (indent + 2) + '<span class="feature-label">Brightness</span>\n'
-                + _SP * (indent + 2) + '<input type="range" class="feature-slider" min="0" max="100" '
-                + _build_attrs({
-                    "hx-post": _url("/action"),
-                    "hx-trigger": "change",
-                    "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
-                    "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
-                    "hx-swap": "none",
-                }) + '>\n'
+                + label
+                + _SP * (indent + 2) + '<input ' + _build_attrs(slider_attrs) + '>\n'
                 + _SP * (indent + 1) + '</div>\n'
             )
         elif ftype == "light-color-temp":

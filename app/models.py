@@ -45,6 +45,13 @@ class View:
 
 
 @dataclass
+class LightdashConfig:
+    container_width: str = ""
+    container_height: str = ""
+
+
+@dataclass
 class Dashboard:
     title: str = "LightDash"
     views: List[View] = field(default_factory=list)
+    lightdash: LightdashConfig = field(default_factory=LightdashConfig)

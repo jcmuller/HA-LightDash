@@ -1,39 +1,64 @@
+lightdash:
+  container_width: 480px
+  container_height: 480px
 views:
-  - title: Kitchen
-    path: kitchen
-    badges:
-      - entity: sensor.kitchen_temperature
-    cards:
-      - type: heading
-        heading: Lights
+  - type: sections
+    max_columns: 1
+    background:
+      image: /api/image/serve/df6d99dadd42ccd63e0d444628af8b75/original
+    title: Home
+    theme: Google Dark Theme
+    badges: []
+    sections:
       - type: grid
-        columns: 2
         cards:
+          - clock_style: digital
+            clock_size: large
+            time_zone: Europe/London
+            time_format: '24'
+            show_seconds: false
+            no_background: true
+            type: clock
+            grid_options:
+              columns: 6
+              rows: 1
           - type: tile
-            entity: light.kitchen_main
-            icon: mdi:ceiling-light
-            color: yellow
-            tap_action:
-              action: toggle
+            grid_options:
+              columns: 6
+            entity: input_number.home_comfort_temperature
+            name: Home temperature
+            show_entity_picture: false
+            vertical: false
+            features:
+              - style: buttons
+                type: numeric-input
+            features_position: inline
+          - type: entities
+            entities:
+              - entity: light.workshop
+                name: Workshop
+              - entity: light.living_room_all_lights
+                name: Lounge
+              - entity: light.dining_room
+                name: Dining Room
+            show_header_toggle: false
+            grid_options:
+              columns: 3
+              rows: auto
+          - type: entities
+            entities:
+              - entity: light.kitchen_main_lights
+                name: Kitchen
+              - entity: light.coffee_bar_light_strip
+                name: Coffee Bar
+                secondary_info: none
+            grid_options:
+              columns: 3
+              rows: auto
           - type: tile
-            entity: light.kitchen_under_cabinet
-            icon: mdi:lightbulb
-            color: blue
-            tap_action:
-              action: toggle
-      - type: heading
-        heading: Climate
-      - type: entities
-        entities:
-          - entity: sensor.kitchen_temperature
-            name: Temperature
-          - entity: sensor.kitchen_humidity
-            name: Humidity
-      - type: heading
-        heading: Appliances
-      - type: entities
-        entities:
-          - entity: switch.kitchen_dishwasher
-            name: Dishwasher
-          - entity: switch.kitchen_kettle
-            name: Kettle
+            entity: cover.kitchen_roof
+            name: Roof
+            secondary_info: none
+            grid_options:
+              columns: 6
+              rows: auto

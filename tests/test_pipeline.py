@@ -567,3 +567,248 @@ def test_navigate_action_uses_d_url():
     html = render_view(view, dashboard, dashboard_name="test_dash")
 
     assert 'hx-get="/d/test_dash/view/other"' in html
+
+
+def test_entity_state_data_entity():
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "views": [
+            {
+                "title": "Test",
+                "path": "test",
+                "cards": [
+                    {"type": "tile", "entity": "light.test"},
+                ],
+            }
+        ]
+    }
+    dashboard = parse_dashboard(raw)
+    view = dashboard.views[0]
+    html = render_view(view, dashboard)
+
+    assert 'data-entity="light.test"' in html
+
+
+def test_tile_light_brightness_feature():
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "views": [
+            {
+                "title": "Lights",
+                "path": "lights",
+                "cards": [
+                    {
+                        "type": "tile",
+                        "entity": "light.test",
+                        "name": "Test Light",
+                        "features": [
+                            {"type": "light-brightness"},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    dashboard = parse_dashboard(raw)
+    view = dashboard.views[0]
+    html = render_view(view, dashboard)
+
+    # Slider rendered
+    assert 'class="feature-slider"' in html
+    assert 'min="0"' in html
+    assert 'max="100"' in html
+    assert 'value="0"' in html  # default when no entity_states
+
+    # No label when default (non-inline rendered with label)
+    # Actually default is bottom, which HAS label
+    assert "Brightness" in html
+
+    # HTMX attributes for brightness control
+    assert "brightness_pct" in html
+    assert "light.turn_on" in html
+
+
+def test_tile_light_brightness_inline():
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "views": [
+            {
+                "title": "Lights",
+                "path": "lights",
+                "cards": [
+                    {
+                        "type": "tile",
+                        "entity": "light.test",
+                        "name": "Test Light",
+                        "features_position": "inline",
+                        "features": [
+                            {"type": "light-brightness"},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    dashboard = parse_dashboard(raw)
+    view = dashboard.views[0]
+    html = render_view(view, dashboard)
+
+    # Inline layout
+    assert 'class="tile-info tile-info-inline"' in html
+
+    # No label in inline mode
+    assert "Brightness" not in html
+
+    # Slider rendered
+    assert 'class="feature-slider"' in html
+
+    # ss() script injected (view has tile with light-brightness feature)
+    assert "function ss(" in html
+
+
+def test_tile_light_brightness_initial_value():
+    """Slider value should reflect entity brightness from entity_states."""
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "views": [
+            {
+                "title": "Lights",
+                "path": "lights",
+                "cards": [
+                    {
+                        "type": "tile",
+                        "entity": "light.test",
+                        "features": [
+                            {"type": "light-brightness"},
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    dashboard = parse_dashboard(raw)
+    view = dashboard.views[0]
+
+    # Test with brightness at 50% (128/255)
+    entity_states = {
+        "light.test": {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {"brightness": 128},
+        }
+    }
+    html = render_view(view, dashboard, entity_states=entity_states)
+    assert 'value="50"' in html
+
+    # Test with brightness at 100% (255/255)
+    entity_states["light.test"]["attributes"]["brightness"] = 255
+    html = render_view(view, dashboard, entity_states=entity_states)
+    assert 'value="100"' in html
+
+    # Test with light off - should default to 0
+    entity_states["light.test"]["state"] = "off"
+    html = render_view(view, dashboard, entity_states=entity_states)
+    assert 'value="0"' in html
+
+
+def test_lightdash_container_width():
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "lightdash": {
+            "container_width": "375px",
+            "container_height": "667px",
+        },
+        "views": [
+            {
+                "title": "Test",
+                "path": "test",
+                "cards": [
+                    {"type": "entity", "entity": "sensor.temp"},
+                ],
+            }
+        ],
+    }
+    dashboard = parse_dashboard(raw)
+    assert dashboard.lightdash.container_width == "375px"
+    assert dashboard.lightdash.container_height == "667px"
+
+    view = dashboard.views[0]
+    html = render_view(view, dashboard)
+    assert 'width: 375px' in html
+    assert 'height: 667px' in html
+    assert 'overflow-y: auto' in html
+
+
+def test_lightdash_container_width_default():
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "views": [
+            {
+                "title": "Test",
+                "path": "test",
+                "cards": [
+                    {"type": "entity", "entity": "sensor.temp"},
+                ],
+            }
+        ],
+    }
+    dashboard = parse_dashboard(raw)
+    assert dashboard.lightdash.container_width == ""
+    assert dashboard.lightdash.container_height == ""
+
+    view = dashboard.views[0]
+    html = render_view(view, dashboard)
+    assert 'width:' not in html
+    assert 'height:' not in html
+
+
+def test_tile_cover_controls():
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "views": [
+            {
+                "title": "Covers",
+                "path": "covers",
+                "cards": [
+                    {"type": "tile", "entity": "cover.kitchen_roof", "name": "Roof"},
+                    {"type": "tile", "entity": "light.test", "name": "Light"},
+                ],
+            }
+        ]
+    }
+    dashboard = parse_dashboard(raw)
+    view = dashboard.views[0]
+    html = render_view(view, dashboard)
+
+    # Cover tile has cover controls (3 buttons) but no toggle
+    assert 'class="cover-controls"' in html
+    assert html.count('class="cover-btn"') == 3
+    assert "cover.open_cover" in html
+    assert "cover.stop_cover" in html
+    assert "cover.close_cover" in html
+
+    # Light tile still has toggle
+    assert html.count('class="toggle-switch"') == 1
+    assert html.count('class="toggle-input"') == 1
+
+    # Cover tile has entity state span
+    assert 'data-entity="cover.kitchen_roof"' in html
+
+    # Cover tile body NOT clickable to toggle
+    toggle_actions = html.count('hx-post="/action"')
+    # Light tile has 1 action (toggle on body), cover has 3 actions (open/stop/close)
+    assert toggle_actions >= 3

@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.compat import scan_dashboard
 from app.config import AppConfig
 from app.ha_client import HAClient
 from app.renderer import render_error, render_view, render_view_index
@@ -38,6 +39,8 @@ async def lifespan(app: FastAPI):
 
     dashboards = AppConfig.load_dashboards(config.config_dir, config.is_addon)
     logger.info("Loaded %d dashboard(s): %s", len(dashboards), list(dashboards.keys()))
+    for name, d in dashboards.items():
+        scan_dashboard(d)
 
     app.state.config = config
     app.state.dashboards = dashboards
@@ -90,7 +93,7 @@ async def root():
     )
 
 
-@app.get("/d/{name}", response_class=HTMLResponse)
+@app.get("/d/{name}")
 async def dashboard_index(name: str):
     dashboard = app.state.dashboards.get(name)
     if not dashboard:
@@ -99,7 +102,12 @@ async def dashboard_index(name: str):
             status_code=404,
             headers=_no_cache,
         )
-    return HTMLResponse(render_view_index(dashboard.views, dashboard_name=name), headers=_no_cache)
+    if not dashboard.views:
+        return HTMLResponse("No views", status_code=404)
+    first = dashboard.views[0]
+    bp = getattr(app.state, "base_path", "")
+    url = f"{bp}/d/{name}/view/{first.path}" if bp else f"/d/{name}/view/{first.path}"
+    return RedirectResponse(url=url, status_code=302)
 
 
 @app.get("/d/{name}/view/{view_path:path}", response_class=HTMLResponse)
@@ -117,6 +125,7 @@ async def dashboard_view(name: str, view_path: str):
 
     ha = getattr(app.state, "ha_client", None)
     entity_icons = {}
+    entity_states = {}
     if ha and ha.is_connected:
         states = await ha.get_states()
         if states:
@@ -124,11 +133,12 @@ async def dashboard_view(name: str, view_path: str):
                 s["entity_id"]: s["attributes"].get("icon", "")
                 for s in states if s["attributes"].get("icon")
             }
+            entity_states = {s["entity_id"]: s for s in states}
 
     for v in dashboard.views:
         if v.path == view_path:
             return HTMLResponse(
-                render_view(v, dashboard, ha_url=ha_url, entity_icons=entity_icons, dashboard_name=name),
+                render_view(v, dashboard, ha_url=ha_url, entity_icons=entity_icons, entity_states=entity_states, dashboard_name=name),
                 headers=_no_cache,
             )
 
@@ -250,10 +260,13 @@ async def api_state(entity_id: str):
 async def api_entity_value(entity_id: str):
     ha = getattr(app.state, "ha_client", None)
     if not ha or not ha.is_connected:
-        return PlainTextResponse("--", status_code=503)
-    state = await ha.get_state(entity_id)
+        return PlainTextResponse("--")
+    try:
+        state = await ha.get_state(entity_id)
+    except Exception:
+        state = None
     if not state or "state" not in state:
-        return PlainTextResponse("?", status_code=404)
+        return PlainTextResponse("?")
     val = state["state"]
     unit = state.get("attributes", {}).get("unit_of_measurement", "")
     display = f"{val} {unit}" if unit else str(val)

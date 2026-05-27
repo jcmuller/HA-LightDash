@@ -1,5 +1,6 @@
-kiosk_mode:
-  hide_header: true
+lightdash:
+  container_width: 480px
+  container_height: 480px
 views:
   - type: sections
     max_columns: 1
@@ -28,7 +29,7 @@ views:
             vertical: true
             features_position: bottom
           - clock_style: digital
-            clock_size: medium
+            clock_size: large
             time_zone: Europe/London
             time_format: '24'
             show_seconds: false
@@ -41,7 +42,7 @@ views:
             grid_options:
               columns: 12
             entity: input_number.home_comfort_temperature
-            name: Radiators
+            name: Home temperature
             show_entity_picture: false
             vertical: false
             features:

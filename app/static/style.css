@@ -413,6 +413,10 @@ html, body {
 .tile-info-inline .feature-row {
   margin-left: auto;
 }
+.tile-info-inline .feature-slider {
+  width: 120px;
+  flex: none;
+}
 .tile-features {
   padding: 0 14px 12px;
   display: flex;
