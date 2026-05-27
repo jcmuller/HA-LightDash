@@ -63,15 +63,18 @@ class SSEManager:
         ws_url = ha_url.replace("http://", "ws://").replace("https://", "wss://").strip("/")
         ws_url = f"{ws_url}/api/websocket"
 
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        use_ssl = ha_url.startswith("https://")
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
 
         msg_id = 0
 
         while True:
             try:
-                async with websockets.connect(ws_url, ssl=ctx) as ws:
+                kw = {"ssl": ctx} if use_ssl else {}
+                async with websockets.connect(ws_url, **kw) as ws:
                     msg = json.loads(await ws.recv())
                     auth_msg = {"type": "auth", "access_token": ha_token}
                     await ws.send(json.dumps(auth_msg))

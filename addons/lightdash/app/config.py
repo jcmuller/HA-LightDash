@@ -1,10 +1,14 @@
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -31,10 +35,7 @@ class AppConfig:
         if is_addon:
             ha_url = "http://supervisor/core"
             ha_token = os.getenv("SUPERVISOR_TOKEN", "")
-            base_path = os.getenv("SUPERVISOR_INGRESS_PATH", "")
-            base_path = os.getenv("BASE_PATH", base_path)
-            if base_path:
-                base_path = base_path.rstrip("/")
+            base_path = cls._resolve_ingress_path(ha_token)
             config_dir = ""
         else:
             ha_url = os.getenv("HA_URL", "")
@@ -54,6 +55,36 @@ class AppConfig:
             is_addon=is_addon,
             base_path=base_path,
         )
+
+    @classmethod
+    def _resolve_ingress_path(cls, ha_token: str) -> str:
+        base_path = os.getenv("SUPERVISOR_INGRESS_PATH", "")
+        base_path = os.getenv("BASE_PATH", base_path)
+        if base_path:
+            return base_path.rstrip("/")
+
+        logger.info("SUPERVISOR_INGRESS_PATH empty — querying Supervisor API for ingress URL")
+        try:
+            import httpx
+            resp = httpx.get(
+                "http://supervisor/addons/self/info",
+                headers={"Authorization": f"Bearer {ha_token}"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                ingress_url = data.get("data", {}).get("ingress_url", "")
+                if ingress_url:
+                    path = urlparse(ingress_url).path.rstrip("/")
+                    logger.info("Resolved ingress path from Supervisor API: %s", path)
+                    return path
+                logger.warning("Supervisor API returned no ingress_url")
+            else:
+                logger.warning("Supervisor API returned HTTP %d", resp.status_code)
+        except Exception as e:
+            logger.warning("Failed to query Supervisor API for ingress path: %s", e)
+
+        return ""
 
     @staticmethod
     def _get_data_dir(is_addon: bool, config_dir: str) -> Path:
