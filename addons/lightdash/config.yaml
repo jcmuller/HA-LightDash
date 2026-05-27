@@ -1,5 +1,5 @@
 name: LightDash
-version: "0.6.6"
+version: "0.6.7"
 slug: lightdash
 description: Lightweight Home Assistant dashboard renderer — define custom dashboards in YAML
 arch:

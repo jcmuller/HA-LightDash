@@ -10,25 +10,123 @@ low-ceremony alternative: no Node.js build step, no custom-card compatibility
 matrix, just plain HTML + CSS + htmx served from a Python/FastAPI process.
 
 
-Quick Start
------------
+Installation
+------------
 
-**Local dev:**
+### Prerequisites
 
-    cp .env.example .env    # edit HA_URL and HA_TOKEN
-    pip install -r requirements.txt
-    python3 -m uvicorn app.main:app --reload
+- Home Assistant OS or Supervised installation
+- The [`homeassistant_api: true`](https://www.home-assistant.io/common-tasks/supervised/#home-assistant-api-proxy)
+  Supervisor flag is enabled automatically when the add-on is installed
 
-Drop YAML files into `config/` — each file becomes a dashboard at
-`/d/{filename_without_ext}`.
+### Add the Repository
 
-**HA add-on:**
+1. Go to **Settings → Add-ons → Add-on Store**
+2. Click the **⋮** menu (top-right) and select **Repositories**
+3. Paste `https://github.com/richkershaw/HA-LightDash`
+4. Click **Add**
 
-Add `https://github.com/richkershaw/HA-LightDash` as an add-on repository in
-HA Supervisor → Settings → Add-ons → Repositories. Install LightDash and
-configure dashboards inline on the Configuration tab.
+### Install LightDash
 
-**Required:** HA instance with `homeassistant_api: true` (Supervisor proxy).
+1. The **LightDash** add-on appears in the store
+2. Click **Install** and wait for the download to complete
+3. Go to the **Info** tab and click **Start**
+4. LightDash appears in the sidebar — click it to open the dashboard index
+
+**No manual configuration needed.** Dashboards are managed through the
+in-app editor (see [In-App Editor](#in-app-editor) below).
+
+
+Accessing Dashboards
+--------------------
+
+LightDash serves dashboards via two methods. Both work simultaneously.
+
+### Via the HA Sidebar (Ingress)
+
+After starting the add-on, click the **LightDash** sidebar entry. This opens
+the dashboard index page within the HA interface. All auth is handled by the
+Supervisor proxy — no separate login required.
+
+### Via Direct Port (HTTP, No Auth)
+
+The add-on also exposes a raw HTTP port (`8001` by default). Any device on
+your LAN can reach it without Home Assistant authentication:
+
+    http://homeassistant.local:8001/
+
+This is useful for:
+- **Wall-mounted tablets** that shouldn't show a login screen
+- **Guest devices** that shouldn't have HA credentials
+- **kiosk-mode browsers** or screens that auto-launch a URL
+
+The hostname defaults to your HA instance's hostname (auto-detected from the
+Supervisor API). You can override it in the add-on Configuration tab:
+
+| Option          | Default                 | Description                                    |
+|-----------------|-------------------------|------------------------------------------------|
+| `public_host`   | auto-detected           | Hostname for direct-port URLs                  |
+| `public_port`   | `8001`                  | Port mapped to `8000/tcp` inside the container |
+
+**Security note:** The direct port has no authentication. Anyone on the
+network can view dashboards. Use firewall rules or a reverse proxy if you
+need to restrict access. Disable the port mapping in the add-on Info tab
+(change `8000/tcp: 8001` to `8000/tcp: null`) if you only want ingress access.
+
+### Dashboard URLs
+
+Each dashboard is available at:
+
+    {base}/d/{name}
+
+Where `{base}` depends on the access method:
+
+- **Ingress (sidebar):** `https://ha-instance/api/hassio_ingress/{token}/d/{name}`
+- **Direct port:** `http://ha-instance:8001/d/{name}`
+
+The exact URLs are logged in the add-on logs at startup and listed at the
+`/dashboards` endpoint. Use the **Public URL** button in the config editor
+to copy the external URL for the current dashboard.
+
+
+In-App Editor
+-------------
+
+Dashboards are managed entirely through the in-app editor — no need to paste
+YAML into the add-on Configuration tab (it's empty).
+
+1. Open the LightDash sidebar entry (or navigate to the dashboard index)
+2. Click **⚙ Config** at the bottom of the page
+3. Click **+ Add Dashboard** and enter a URL-safe name (e.g. `living-room`)
+4. Edit the YAML in the left pane (CodeMirror syntax-highlighted editor)
+5. Click **Save** — the preview pane updates automatically
+6. Click **Preview** to refresh the preview without saving
+
+The config page shows a split view:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Dashboard list         CodeMirror YAML    Preview       │
+│                         editor             (iframe)      │
+│  living-room ──active── ┌─────────────────┐              │
+│  kitchen                │ views:           │  [rendered  │
+│                         │   - title: Home  │   view]     │
+│  [+ Add Dashboard]      │     path: home   │              │
+│  [Delete]               │     sections:... │              │
+│                         └─────────────────┘              │
+│                         [Preview] [Save]                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **Add Dashboard**: Creates a new YAML file with a starter template
+- **Delete**: Removes the dashboard file entirely
+- **Rename**: Renames the dashboard (and its YAML file on disk)
+- **Save**: Writes YAML to disk and reloads the dashboard
+- **Preview**: Renders the current editor content in the right pane
+- **Public URL**: Copies the external dashboard URL to the clipboard
+
+Dashboards are stored as individual YAML files in the add-on data directory
+(`/data/dashboards/`), which is included in HA snapshots.
 
 
 YAML Dashboard Format
@@ -37,10 +135,14 @@ YAML Dashboard Format
 A dashboard is a YAML file with a top-level `views` key:
 
 ```yaml
+title: Living Room
+lightdash:
+  container_width: 480px
+  container_height: 480px
 views:
-  - title: Living Room
-    path: living
-    icon: mdi:sofa
+  - title: Home
+    path: home
+    icon: mdi:home
     bg_image: /api/image/serve/abc123/original
     type: sections
     max_columns: 4
@@ -54,35 +156,52 @@ views:
             features_position: inline
 ```
 
-**View fields:**
+**Top-level fields:**
 
-| Field        | Description                                        |
-|--------------|----------------------------------------------------|
-| `title`      | Display title (also used in `<title>`)             |
-| `path`       | URL path segment (defaults to slug of title)       |
-| `icon`       | MDI icon (shown in view index)                     |
-| `bg_color`   | CSS background-color                               |
-| `bg_image`   | Background image URL                               |
-| `type`       | View layout type (`sections` or `custom:layout-card`) |
-| `max_columns`| Column count for max-width grid                    |
+| Field       | Description                                        |
+|-------------|----------------------------------------------------|
+| `title`     | Display title                                      |
+| `lightdash` | Container sizing (see below)                       |
+| `views`     | List of views                                      |
+
+### lightdash config
+
+```yaml
+lightdash:
+  container_width: 480px    # fixed container width (e.g. 480px, 100%)
+  container_height: 480px   # fixed container height
+```
+
+### View fields
+
+| Field         | Description                                        |
+|---------------|----------------------------------------------------|
+| `title`       | Display title (also used in `<title>`)             |
+| `path`        | URL path segment (defaults to slug of title)       |
+| `icon`        | MDI icon (shown in view index)                     |
+| `bg_color`    | CSS background-color                               |
+| `bg_image`    | Background image URL (`/api/image/serve/...`)      |
+| `type`        | View layout type (`sections` or `custom:layout-card`) |
+| `max_columns` | Column count for max-width grid                    |
 
 When `type: custom:layout-card` is used, the parser groups cards into grid
 sections split by `custom:layout-break` card entries. The `layout.max_cols`
 value determines section column count.
 
-**Section fields** (inside `sections: [...]`):
+### Section fields
 
 | Field     | Description                          |
 |-----------|--------------------------------------|
 | `type`    | Section type (`grid`)                |
 | `columns` | Number of grid columns               |
 
-**Grid options on cards** (inside `grid_options: {...}`):
+### Grid options on cards
 
-| Field     | Description                          |
-|-----------|--------------------------------------|
-| `columns` | Span this many columns               |
-| `rows`    | Span this many rows                  |
+```yaml
+grid_options:
+  columns: 6      # span this many columns
+  rows: auto      # span this many rows
+```
 
 
 Supported Card Types
@@ -116,7 +235,8 @@ Features:
 | `numeric-input`    | Decrement/increment buttons, posts `input_number.decrement/increment` |
 
 Binary-domain entities (`light`, `switch`, `fan`, `input_boolean`) get a
-toggle switch. Non-binary entities show state text.
+toggle switch. Non-binary entities show state text. Cover entities show
+open/stop/close buttons instead of a toggle.
 
 ### entities
 
@@ -142,7 +262,7 @@ Binary non-cover entities get a toggle switch.
 
 ### button
 
-A compact action button. Supports `tap_action`.
+A compact action button. Icon and name are on one line. Supports `tap_action`.
 
 ```yaml
 type: button
@@ -324,6 +444,47 @@ tap_action:
 ```
 
 
+Auto-Mapped HA Custom Cards
+---------------------------
+
+These card types are automatically translated at parse time. The renderer
+never sees the original type.
+
+| Source card                      | Target    | Notes                                          |
+|----------------------------------|-----------|------------------------------------------------|
+| `custom:mushroom-light-card`     | `tile`    | brightness/color-temp features, inline layout  |
+| `custom:mushroom-cover-card`     | `entities`| single entity row with open/stop/close buttons |
+| `custom:mushroom-number-card`    | `tile`    | numeric-input feature                          |
+| `custom:layout-card` (view type) | sections  | grouped by `custom:layout-break` into sections |
+
+**Unsupported card types** (not mapped, rendered as `placeholder`):
+
+- `custom:mushroom-template-card` — use `button` with `tap_action.navigate` instead
+- `shortcut` — use `button` instead
+- Any other `custom:*` card type
+
+
+Compatibility Checker
+---------------------
+
+The compatibility module (`app/compat.py`) scans dashboards at startup for
+known limitations and logs warnings:
+
+- **Custom card types not in the mapping table** — rendered as `placeholder`
+- **HA Jinja2 template syntax** in markdown cards — unsupported
+- **`card_mod` styling** — not supported
+- **Mapped custom cards** — the mapping may not capture every nuance of the
+  original Mushroom/Layout card configuration
+
+
+Updating
+--------
+
+When a new version is released, the add-on shows an **Update** button on the
+Info tab. Click it and then **Restart**. Dashboards persist across updates
+in `/data/dashboards/`.
+
+
 Architecture
 ------------
 
@@ -393,41 +554,6 @@ Architecture
    updates slider values when the state changes externally.
 
 
-Compatibility Checker
----------------------
-
-The compatibility module (`app/compat.py`) scans dashboards for known
-limitations and displays a yellow banner at the top of the rendered view:
-
-- **Custom card types not in the mapping table** — rendered as `placeholder`
-- **HA Jinja2 template syntax** in markdown cards — unsupported
-- **`card_mod` styling** — not supported
-- **Mapped custom cards** — the mapping may not capture every nuance of the
-  original Mushroom/Layout card configuration
-
-Add `compat_warnings=scan_view(view)` when calling `render_view()` to enable.
-
-
-Auto-Mapped HA Custom Cards
----------------------------
-
-These card types are automatically translated at parse time. The renderer
-never sees the original type.
-
-| Source card                      | Target    | Notes                                          |
-|----------------------------------|-----------|------------------------------------------------|
-| `custom:mushroom-light-card`     | `tile`    | brightness/color-temp features, inline layout  |
-| `custom:mushroom-cover-card`     | `entities`| single entity row with open/stop/close buttons |
-| `custom:mushroom-number-card`    | `tile`    | numeric-input feature                          |
-| `custom:layout-card` (view type) | sections  | grouped by `custom:layout-break` into sections |
-
-**Unsupported card types** (not mapped, rendered as `placeholder`):
-
-- `custom:mushroom-template-card` — use `button` with `tap_action.navigate` instead
-- `shortcut` — use `button` instead
-- Any other `custom:*` card type
-
-
 Local Development
 -----------------
 
@@ -446,78 +572,3 @@ Run tests:
 ```bash
 python3 -m pytest tests/test_pipeline.py -v
 ```
-
-
-HA Add-On
----------
-
-LightDash is available as a Home Assistant add-on via the GitHub repository.
-
-### Prerequisites
-
-- Home Assistant OS or Supervised installation
-- `homeassistant_api: true` enabled (Supervisor proxy — automatic)
-
-### Adding the Repository
-
-1. Go to **Settings → Add-ons → Repositories**
-2. Paste `https://github.com/richkershaw/HA-LightDash`
-3. Click **Add**
-
-### Installation
-
-1. The **LightDash** add-on will now appear in the add-on store
-2. Click **Install** (wait for the download to complete)
-3. Go to the **Info** tab and click **Start**
-4. LightDash appears in the sidebar as **LightDash**
-5. Click **Open Web UI** to open the dashboard index page
-
-### In-App Editor
-
-Dashboards are managed entirely through the in-app editor — no need to paste
-YAML into the add-on Configuration tab (it's empty).
-
-1. Go to **Open Web UI** (or navigate to the LightDash sidebar entry)
-2. Click **⚙ Config** at the bottom of the dashboard index page
-3. Click **+ Add Dashboard** and enter a URL-safe name (e.g. `living-room`)
-4. Edit the YAML in the left pane (CodeMirror syntax-highlighted editor)
-5. Click **Save** — the preview pane updates automatically
-6. Click **Preview** to refresh the preview without saving
-
-The config page shows a split view:
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Dashboard list         CodeMirror YAML    Preview       │
-│                         editor             (iframe)      │
-│  living-room ──active── ┌─────────────────┐              │
-│  kitchen                │ views:           │  [rendered  │
-│                         │   - title: Home  │   view]     │
-│  [+ Add Dashboard]      │     path: home   │              │
-│  [Delete]               │     sections:... │              │
-│                         └─────────────────┘              │
-│                         [Preview] [Save]                  │
-└──────────────────────────────────────────────────────────┘
-```
-
-- **Add Dashboard**: Creates a new YAML file with a starter template
-- **Delete**: Removes the dashboard file entirely
-- **Save**: Writes YAML to disk and reloads the dashboard (available at `/d/{name}`)
-- **Preview**: Renders the current editor content in the right pane
-
-Dashboards are stored as individual YAML files in the add-on data directory
-(`/data/dashboards/`), which is included in HA snapshots.
-
-### Dashboard URLs
-
-Each dashboard is available at:
-
-    https://[your-ha-instance]/[ingress-path]/d/{name}
-
-The exact URLs are logged in the add-on logs at startup and listed at the
-`/health` endpoint.
-
-### Updating
-
-When a new version is released, the add-on shows an **Update** button on the
-Info tab. Click it and then **Restart**.
