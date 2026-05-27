@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).parent
 
+_SW_SCRIPT = '<script>if(navigator.serviceWorker){navigator.serviceWorker.getRegistrations().then(function(r){for(var i=0;i<r.length;i++){r[i].unregister()}})}</script>'
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,6 +54,8 @@ async def lifespan(app: FastAPI):
     app.state.ha_client = ha_client
     app.state.sse = sse
     app.state.base_path = config.base_path
+
+    logger.info("base_path=%r is_addon=%s", config.base_path, config.is_addon)
 
     import app.renderer as r
     r._base_path = config.base_path
@@ -101,6 +105,7 @@ async def root():
         '<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">'
         '<title>LightDash</title>'
         '<link rel="stylesheet" href="' + css + '">'
+        + _SW_SCRIPT +
         '</head>'
         '<body>'
         '<div class="view-index">'
@@ -494,6 +499,7 @@ async def config_page():
     border: none;
   }}
 </style>
+{_SW_SCRIPT}
 </head>
 <body>
 <div id="config-layout">
@@ -919,7 +925,8 @@ async def config_preview(req: Request):
     return HTMLResponse(
         '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<title>Preview</title>\n'
         '<link rel="stylesheet" href="' + (bp + "/static/style.css" if bp else "/static/style.css") + '">\n'
-        '</head>\n<body>\n'
+        + _SW_SCRIPT + '\n'
+        + '</head>\n<body>\n'
         + top_bar +
         html_out +
         '</body>\n</html>',

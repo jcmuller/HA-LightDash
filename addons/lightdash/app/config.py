@@ -32,11 +32,16 @@ class AppConfig:
             ha_url = "http://supervisor/core"
             ha_token = os.getenv("SUPERVISOR_TOKEN", "")
             base_path = os.getenv("SUPERVISOR_INGRESS_PATH", "")
+            base_path = os.getenv("BASE_PATH", base_path)
+            if base_path:
+                base_path = base_path.rstrip("/")
             config_dir = ""
         else:
             ha_url = os.getenv("HA_URL", "")
             ha_token = os.getenv("HA_TOKEN", "")
             base_path = os.getenv("BASE_PATH", "")
+            if base_path:
+                base_path = base_path.rstrip("/")
             config_dir = os.getenv("CONFIG_DIR", "config")
 
         return cls(

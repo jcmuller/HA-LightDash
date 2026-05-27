@@ -57,6 +57,13 @@ _dashboard_name: str = ""
 _base_path: str = ""
 _icon_svg_cache: Dict[str, str] = {}
 
+_SW_SCRIPT = (
+    '<script>'
+    'if(navigator.serviceWorker){navigator.serviceWorker.getRegistrations().then(function(r){'
+    'for(var i=0;i<r.length;i++){r[i].unregister()}})}'
+    '</script>\n'
+)
+
 
 def _url(path: str) -> str:
     return _base_path + path if _base_path else path
@@ -167,6 +174,7 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
         '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
         '<script src="https://unpkg.com/htmx.org@2.0.4"></script>\n'
         '<script src="https://unpkg.com/htmx-ext-sse@2.2.4/dist/sse.js"></script>\n'
+        + _SW_SCRIPT
         + head_extra +
         '</head>\n'
         '<body>\n'
@@ -237,6 +245,7 @@ def render_view_index(views: List[View], dashboard_name: str = "") -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
         '<title>LightDash</title>\n'
         '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        + _SW_SCRIPT +
         '</head>\n'
         '<body>\n'
         '<div class="view-index">\n'
@@ -265,6 +274,7 @@ def render_dashboard_index(dashboards: List[Dict[str, str]]) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
         '<title>LightDash</title>\n'
         '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        + _SW_SCRIPT +
         '</head>\n'
         '<body>\n'
         '<div class="view-index">\n'
@@ -289,6 +299,7 @@ def render_error(message: str) -> str:
         '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
         '<title>LightDash - Error</title>\n'
         '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        + _SW_SCRIPT +
         '</head>\n'
         '<body>\n'
         '<div class="view-index">\n'
