@@ -140,6 +140,10 @@ def _parse_section(data: Dict[str, Any]) -> Optional[Section]:
     raw_cards = data.get("cards") or []
     if not isinstance(raw_cards, list):
         return None
+    if not raw_cards:
+        entities = data.get("entities")
+        if isinstance(entities, list):
+            raw_cards = [{"type": "entities", "entities": entities}]
     cards = [_parse_card(c) for c in raw_cards if isinstance(c, dict)]
     columns = data.get("columns", 0)
     return Section(
