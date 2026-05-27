@@ -517,3 +517,14 @@ dashboards:
 
 When a new version is released, the add-on shows an **Update** button on the
 Info tab. Click it and then **Restart**.
+
+### Releasing
+
+Before pushing changes, bump the version in `addons/lightdash/config.yaml`
+so Supervisor detects a new build:
+
+```yaml
+version: "0.3.1"   # increment each push
+```
+
+Then commit and push to trigger a rebuild in Supervisor.
