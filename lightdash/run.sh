@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/with-contenv bashio
 
 export HA_URL="http://supervisor/core"
 export HA_TOKEN="$SUPERVISOR_TOKEN"
