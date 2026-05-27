@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import html
 import httpx
 import json
@@ -55,6 +56,7 @@ _entity_states: Dict[str, Any] = {}
 _ha_url: str = ""
 _dashboard_name: str = ""
 _base_path: str = ""
+_via_ingress = contextvars.ContextVar("renderer_via_ingress", default=False)
 _icon_svg_cache: Dict[str, str] = {}
 
 _SW_SCRIPT = (
@@ -66,7 +68,9 @@ _SW_SCRIPT = (
 
 
 def _url(path: str) -> str:
-    return _base_path + path if _base_path else path
+    if _base_path and _via_ingress.get():
+        return _base_path + path
+    return path
 
 
 def register(type_name: str):

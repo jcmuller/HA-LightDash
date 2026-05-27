@@ -82,7 +82,22 @@ _no_cache = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
 
 def _bp() -> str:
-    return getattr(app.state, "base_path", "")
+    bp = getattr(app.state, "base_path", "")
+    if bp:
+        import app.renderer as r
+        if not r._via_ingress.get():
+            return ""
+    return bp
+
+
+@app.middleware("http")
+async def detect_ingress(request: Request, call_next):
+    import app.renderer as r
+    bp = getattr(app.state, "base_path", "")
+    via_ingress = bool(bp) and request.url.path.startswith(bp)
+    r._via_ingress.set(via_ingress)
+    response = await call_next(request)
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
