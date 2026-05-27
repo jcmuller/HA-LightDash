@@ -89,7 +89,10 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
     if view.bg_color:
         bg += f"background-color: {view.bg_color};"
     if view.bg_image:
-        bg += f"background-image: url('{html.escape(view.bg_image)}');background-size: cover;background-position: center;"
+        img = view.bg_image
+        if img.startswith("/api/image/serve/"):
+            img = _url("/ha/image/serve/" + img[len("/api/image/serve/"):])
+        bg += f"background-image: url('{html.escape(img)}');background-size: cover;background-position: center;"
     if dashboard.lightdash.container_width:
         bg += f"width: {dashboard.lightdash.container_width};"
     if dashboard.lightdash.container_height:

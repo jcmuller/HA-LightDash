@@ -9,9 +9,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
 
+import httpx
 import yaml
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.compat import scan_dashboard
@@ -315,6 +316,21 @@ async def api_history(entity_id: str, hours: int = 24):
     return history or []
 
 
+@app.get("/ha/image/serve/{path:path}")
+async def proxy_ha_image(path: str):
+    config = getattr(app.state, "config", None)
+    if not config or not config.ha_url:
+        return PlainTextResponse("HA not configured", status_code=502)
+    url = f"{config.ha_url.rstrip('/')}/api/image/serve/{path}"
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {config.ha_token}"})
+            return Response(content=resp.content, media_type=resp.headers.get("content-type", "image/png"))
+        except Exception as e:
+            logger.warning("Image proxy error: %s", e)
+            return PlainTextResponse("Image fetch failed", status_code=502)
+
+
 # ── Config editor ──────────────────────────────────────────────────────────
 
 _NEW_DASHBOARD_TEMPLATE = """\
@@ -334,6 +350,8 @@ views:
 async def config_page():
     bp = _bp()
     css = bp + "/static/style.css" if bp else "/static/style.css"
+    cfg = getattr(app.state, "config", None)
+    public_base = cfg.public_base if cfg and cfg.public_base else ""
 
     return HTMLResponse(f"""\
 <!DOCTYPE html>
@@ -536,6 +554,7 @@ async def config_page():
 const BASE="{bp}";
 const LIST_URL = BASE + "/_config/dashboards";
 const PREVIEW_URL = BASE + "/_config/preview";
+const PUBLIC_BASE="{public_base}";
 </script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5/lib/codemirror.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5/mode/yaml/yaml.js"></script>
@@ -743,7 +762,7 @@ const PREVIEW_URL = BASE + "/_config/preview";
   document.getElementById("preview-btn").addEventListener("click", refreshPreview);
   document.getElementById("url-btn").addEventListener("click", function(){{
     if(!currentName){{setStatus("Select a dashboard first","error");return}}
-    var url = window.location.origin + BASE + "/d/" + encodeURIComponent(currentName);
+    var url = (PUBLIC_BASE || window.location.origin + BASE) + "/d/" + encodeURIComponent(currentName);
     navigator.clipboard.writeText(url).then(function(){{
       setStatus("Copied: " + url, "ok");
     }}).catch(function(){{

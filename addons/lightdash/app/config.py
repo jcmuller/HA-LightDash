@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -21,6 +21,18 @@ class AppConfig:
     config_dir: str = "config"
     is_addon: bool = False
     base_path: str = ""
+    public_host: str = ""
+    public_port: str = ""
+
+    _options_cache: dict = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def _load_options(cls) -> dict:
+        try:
+            with open("/data/options.json") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -31,12 +43,18 @@ class AppConfig:
             pass
 
         is_addon = Path("/data/options.json").exists()
+        public_host = ""
+        public_port = ""
+        options: dict = {}
 
         if is_addon:
             ha_url = "http://supervisor/core"
             ha_token = os.getenv("SUPERVISOR_TOKEN", "")
             base_path = cls._resolve_ingress_path(ha_token)
             config_dir = ""
+            options = cls._load_options()
+            public_host = options.get("public_host", "")
+            public_port = options.get("public_port", "")
         else:
             ha_url = os.getenv("HA_URL", "")
             ha_token = os.getenv("HA_TOKEN", "")
@@ -44,6 +62,8 @@ class AppConfig:
             if base_path:
                 base_path = base_path.rstrip("/")
             config_dir = os.getenv("CONFIG_DIR", "config")
+            public_host = os.getenv("PUBLIC_HOST", "")
+            public_port = os.getenv("PUBLIC_PORT", "")
 
         return cls(
             ha_url=ha_url,
@@ -54,7 +74,16 @@ class AppConfig:
             config_dir=config_dir,
             is_addon=is_addon,
             base_path=base_path,
+            public_host=public_host,
+            public_port=public_port,
+            _options_cache=options if is_addon else {},
         )
+
+    @property
+    def public_base(self) -> str:
+        if self.public_host and self.public_port:
+            return f"http://{self.public_host}:{self.public_port}"
+        return ""
 
     @classmethod
     def _resolve_ingress_path(cls, ha_token: str) -> str:

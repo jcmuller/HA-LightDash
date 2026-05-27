@@ -17,5 +17,9 @@ ports:
   8000/tcp: null
 ports_description:
   8000/tcp: Direct HTTP access (disable for production)
-options: {}
-schema: {}
+options:
+  public_host: ""
+  public_port: ""
+schema:
+  public_host: str
+  public_port: str
