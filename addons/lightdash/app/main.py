@@ -38,9 +38,11 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(sse.run_ha_websocket(config.ha_url, config.ha_token))
 
     dashboards = AppConfig.load_dashboards(config.config_dir, config.is_addon)
-    logger.info("Loaded %d dashboard(s): %s", len(dashboards), list(dashboards.keys()))
+    logger.info("Loaded %d dashboard(s)", len(dashboards))
     for name, d in dashboards.items():
         scan_dashboard(d)
+        url = f"{config.base_path}/d/{name}"
+        logger.info('  "%s" → %s', d.title, url)
 
     app.state.config = config
     app.state.dashboards = dashboards
@@ -154,10 +156,15 @@ async def health():
     ha = getattr(app.state, "ha_client", None)
     ha_ok = ha and ha.is_connected
     dashboards = getattr(app.state, "dashboards", {})
+    bp = getattr(app.state, "base_path", "")
     return {
         "status": "ok",
         "ha_connected": ha_ok,
         "dashboards_loaded": len(dashboards),
+        "dashboards": {
+            name: f"{bp}/d/{name}"
+            for name in dashboards
+        },
     }
 
 

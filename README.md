@@ -479,7 +479,7 @@ per dashboard:
 |---------|--------------------------------------------------------------|
 | `name`  | URL path segment (e.g. `living-room` → `/d/living-room`)    |
 | `title` | Display title shown in the tab bar                           |
-| `yaml`  | The full dashboard YAML pasted as text (see format above)    |
+| `yaml`  | The full dashboard YAML pasted as text in the multiline textarea (see format above) |
 
 Example with two dashboards:
 
@@ -513,6 +513,15 @@ dashboards:
 2. Click **Start**
 3. LightDash appears in the sidebar as **LightDash**
 
+### Dashboard URLs
+
+Each dashboard is available at:
+
+    https://[your-ha-instance]/[ingress-path]/d/{name}
+
+The exact URLs are logged in the add-on logs at startup and listed at the
+`/health` endpoint.
+
 ### Updating
 
 When a new version is released, the add-on shows an **Update** button on the
@@ -524,7 +533,7 @@ Before pushing changes, bump the version in `addons/lightdash/config.yaml`
 so Supervisor detects a new build:
 
 ```yaml
-version: "0.3.2"   # increment each push
+version: "0.3.3"   # increment each push
 ```
 
 Then commit and push to trigger a rebuild in Supervisor.
