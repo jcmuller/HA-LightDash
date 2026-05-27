@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 
 @dataclass
 class AppConfig:
@@ -48,29 +50,51 @@ class AppConfig:
             base_path=base_path,
         )
 
+    @staticmethod
+    def _get_data_dir(is_addon: bool, config_dir: str) -> Path:
+        if is_addon:
+            return Path("/data/dashboards")
+        return Path(config_dir)
+
     @classmethod
     def load_dashboards(cls, config_dir: str, is_addon: bool) -> dict:
-        from app.parser import parse_dashboard_from_file, parse_dashboard
+        from app.parser import parse_dashboard_from_file
 
-        import yaml
-
+        data_dir = cls._get_data_dir(is_addon, config_dir)
         dashboards: dict = {}
 
-        if is_addon:
-            options_path = Path("/data/options.json")
-            if options_path.exists():
-                with open(options_path) as f:
-                    options = json.load(f)
-                for entry in options.get("dashboards", []):
-                    name = entry["name"]
-                    raw = yaml.safe_load(entry["yaml"])
-                    if raw:
-                        dashboards[name] = parse_dashboard(raw)
-        else:
-            config_path = Path(config_dir)
-            if config_path.exists() and config_path.is_dir():
-                for yaml_file in sorted(config_path.glob("*.yaml")):
-                    name = yaml_file.stem
-                    dashboards[name] = parse_dashboard_from_file(str(yaml_file))
+        if not data_dir.exists() or not data_dir.is_dir():
+            return dashboards
+
+        for yaml_file in sorted(data_dir.glob("*.yaml")):
+            name = yaml_file.stem
+            try:
+                dashboards[name] = parse_dashboard_from_file(str(yaml_file))
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Failed to parse %s: %s", yaml_file.name, e)
 
         return dashboards
+
+    @staticmethod
+    def flush_dashboard_to_disk(name: str, yaml_text: str, is_addon: bool, config_dir: str) -> None:
+        from app.parser import parse_dashboard
+
+        data_dir = AppConfig._get_data_dir(is_addon, config_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = data_dir / f"{name}.yaml"
+        with open(file_path, "w") as f:
+            f.write(yaml_text)
+
+        raw = yaml.safe_load(yaml_text)
+        if raw is None:
+            raise ValueError("Empty YAML content")
+        parse_dashboard(raw)
+
+    @staticmethod
+    def delete_dashboard_from_disk(name: str, is_addon: bool, config_dir: str) -> None:
+        data_dir = AppConfig._get_data_dir(is_addon, config_dir)
+        file_path = data_dir / f"{name}.yaml"
+        if file_path.exists():
+            file_path.unlink()

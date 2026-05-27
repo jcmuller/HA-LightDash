@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import urllib.parse
@@ -8,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
 
+import yaml
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from app.compat import scan_dashboard
 from app.config import AppConfig
 from app.ha_client import HAClient
+from app.parser import parse_dashboard
 from app.renderer import render_error, render_view, render_view_index
 from app.sse_manager import SSEManager
 
@@ -73,10 +76,25 @@ if static_dir.exists():
 _no_cache = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
 
+def _bp() -> str:
+    return getattr(app.state, "base_path", "")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    bp = getattr(app.state, "base_path", "")
+    bp = _bp()
+    dashboards = getattr(app.state, "dashboards", {})
     css = bp + "/static/style.css" if bp else "/static/style.css"
+
+    items = ""
+    if dashboards:
+        for name, d in sorted(dashboards.items()):
+            title = html.escape(d.title or name)
+            url = html.escape(f"{bp}/d/{name}")
+            items += f'<li><a href="{url}">{title}</a></li>\n'
+    else:
+        items = '<li class="empty">No dashboards yet. <a href="' + html.escape(f"{bp}/_config") + '">Add one</a>.</li>'
+
     return HTMLResponse(
         '<!DOCTYPE html>'
         '<html lang="en">'
@@ -87,7 +105,10 @@ async def root():
         '<body>'
         '<div class="view-index">'
         '<h1>LightDash</h1>'
-        '<p>Go to <code>/d/{dashboard_name}</code> to load a dashboard.</p>'
+        '<ul class="dashboard-list">'
+        + items +
+        '</ul>'
+        '<p class="config-link"><a href="' + html.escape(f"{bp}/_config") + '">&#x2699; Config</a></p>'
         '</div>'
         '</body>'
         '</html>',
@@ -107,7 +128,7 @@ async def dashboard_index(name: str):
     if not dashboard.views:
         return HTMLResponse("No views", status_code=404)
     first = dashboard.views[0]
-    bp = getattr(app.state, "base_path", "")
+    bp = _bp()
     url = f"{bp}/d/{name}/view/{first.path}" if bp else f"/d/{name}/view/{first.path}"
     return RedirectResponse(url=url, status_code=302)
 
@@ -156,7 +177,7 @@ async def health():
     ha = getattr(app.state, "ha_client", None)
     ha_ok = ha and ha.is_connected
     dashboards = getattr(app.state, "dashboards", {})
-    bp = getattr(app.state, "base_path", "")
+    bp = _bp()
     return {
         "status": "ok",
         "ha_connected": ha_ok,
@@ -287,3 +308,533 @@ async def api_history(entity_id: str, hours: int = 24):
         return {"error": "HA not connected"}
     history = await ha.get_history(entity_id, hours)
     return history or []
+
+
+# ── Config editor ──────────────────────────────────────────────────────────
+
+_NEW_DASHBOARD_TEMPLATE = """\
+views:
+  - title: Home
+    path: home
+    icon: mdi:home
+    sections:
+      - cards:
+          - type: tile
+            entity: ""
+"""
+
+
+@app.get("/_config", response_class=HTMLResponse)
+async def config_page():
+    bp = _bp()
+    css = bp + "/static/style.css" if bp else "/static/style.css"
+
+    return HTMLResponse(f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>LightDash Config</title>
+<link rel="stylesheet" href="{css}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5/lib/codemirror.css">
+<style>
+  #config-layout {{
+    display: grid;
+    grid-template-columns: 200px 1fr 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }}
+  #sidebar {{
+    background: #181818;
+    border-right: 1px solid #2a2a2a;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+  }}
+  #sidebar h2 {{
+    font-size: 0.95rem;
+    color: #eee;
+    margin: 0;
+  }}
+  #sidebar ul {{
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    flex: 1;
+  }}
+  #sidebar li {{
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #ccc;
+  }}
+  #sidebar li:hover {{
+    background: #2a2a2a;
+  }}
+  #sidebar li.active {{
+    background: #1e3a5f;
+    color: #fff;
+  }}
+  #sidebar .btn {{
+    display: block;
+    width: 100%;
+    padding: 6px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-family: inherit;
+    text-align: center;
+  }}
+  #sidebar .btn-add {{
+    background: #1e3a5f;
+    color: #fff;
+  }}
+  #sidebar .btn-add:hover {{
+    background: #2a4a7f;
+  }}
+  #sidebar .btn-del {{
+    background: #3a1a1a;
+    color: #f88;
+    margin-top: 4px;
+  }}
+  #sidebar .btn-del:hover {{
+    background: #5a2a2a;
+  }}
+  #editor-pane {{
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }}
+  #editor-container {{
+    flex: 1;
+    overflow: auto;
+  }}
+  .CodeMirror {{
+    height: 100% !important;
+  }}
+  #status-bar {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #1a1a1a;
+    border-top: 1px solid #2a2a2a;
+    font-size: 0.8rem;
+  }}
+  #status-msg {{
+    flex: 1;
+    color: #888;
+  }}
+  #status-msg.error {{
+    color: #f88;
+  }}
+  #status-msg.ok {{
+    color: #8f8;
+  }}
+  #status-bar button {{
+    padding: 4px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-family: inherit;
+  }}
+  #save-btn {{
+    background: #1e3a5f;
+    color: #fff;
+  }}
+  #save-btn:hover {{
+    background: #2a4a7f;
+  }}
+  #preview-btn {{
+    background: #2a2a2a;
+    color: #ccc;
+  }}
+  #preview-btn:hover {{
+    background: #3a3a3a;
+  }}
+  #preview-pane {{
+    border-left: 1px solid #2a2a2a;
+    background: #111;
+  }}
+  #preview-frame {{
+    width: 100%;
+    height: 100%;
+    border: none;
+  }}
+</style>
+</head>
+<body>
+<div id="config-layout">
+  <aside id="sidebar">
+    <h2>Dashboards</h2>
+    <ul id="dashboard-list"></ul>
+    <button class="btn btn-add" id="add-btn">+ Add Dashboard</button>
+    <button class="btn btn-del" id="del-btn" style="display:none">Delete</button>
+  </aside>
+  <main id="editor-pane">
+    <div id="editor-container"><textarea id="fallback-editor" style="width:100%;height:100%;background:#1e1e1e;color:#ddd;border:none;font-family:monospace;padding:8px;resize:none"></textarea></div>
+    <div id="status-bar">
+      <span id="status-msg">Select a dashboard to edit</span>
+      <button id="preview-btn">Preview</button>
+      <button id="save-btn">Save</button>
+    </div>
+  </main>
+  <aside id="preview-pane">
+    <iframe id="preview-frame" srcdoc="<html><body style='background:#111;color:#555;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.2rem'>Preview</body></html>"></iframe>
+  </aside>
+</div>
+
+<script>
+const BASE="{bp}";
+const LIST_URL = BASE + "/_config/dashboards";
+const PREVIEW_URL = BASE + "/_config/preview";
+</script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5/lib/codemirror.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5/mode/yaml/yaml.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5/addon/edit/closebrackets.js"></script>
+<script>
+(function() {{
+  let currentName = null;
+  let cm = null;
+  const ta = document.getElementById("fallback-editor");
+  const listEl = document.getElementById("dashboard-list");
+  const statusMsg = document.getElementById("status-msg");
+  const previewFrame = document.getElementById("preview-frame");
+  const delBtn = document.getElementById("del-btn");
+
+  function setStatus(msg, type) {{
+    statusMsg.textContent = msg;
+    statusMsg.className = type || "";
+  }}
+
+  async function loadList() {{
+    try {{
+      const res = await fetch(LIST_URL);
+      const list = await res.json();
+      listEl.innerHTML = "";
+      for (const d of list) {{
+        const li = document.createElement("li");
+        li.textContent = d.name + (d.title ? " \\u2014 " + d.title : "");
+        li.dataset.name = d.name;
+        li.addEventListener("click", () => selectDashboard(d.name));
+        if (d.name === currentName) li.classList.add("active");
+        listEl.appendChild(li);
+      }}
+      if (list.length === 0) {{
+        delBtn.style.display = "none";
+      }}
+    }} catch(e) {{
+      setStatus("Failed to load dashboard list", "error");
+    }}
+  }}
+
+  async function selectDashboard(name) {{
+    currentName = name;
+    document.querySelectorAll("#dashboard-list li").forEach(li => li.classList.toggle("active", li.dataset.name === name));
+    delBtn.style.display = "";
+    try {{
+      const res = await fetch(LIST_URL + "/" + encodeURIComponent(name) + ".yaml");
+      const text = await res.text();
+      if (cm) {{
+        cm.setValue(text);
+      }} else {{
+        ta.value = text;
+      }}
+      setStatus("Editing: " + name, "");
+      refreshPreview();
+    }} catch(e) {{
+      setStatus("Failed to load YAML", "error");
+    }}
+  }}
+
+  function getYaml() {{
+    return cm ? cm.getValue() : ta.value;
+  }}
+
+  async function saveDashboard() {{
+    if (!currentName) return;
+    const yaml = getYaml();
+    try {{
+      const res = await fetch(LIST_URL + "/" + encodeURIComponent(currentName), {{
+        method: "PUT",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{yaml}})
+      }});
+      if (res.ok) {{
+        setStatus("Saved", "ok");
+        refreshPreview();
+      }} else {{
+        const err = await res.json();
+        setStatus(err.error || "Save failed", "error");
+      }}
+    }} catch(e) {{
+      setStatus("Save error: " + e.message, "error");
+    }}
+  }}
+
+  async function refreshPreview() {{
+    if (!currentName) return;
+    const yaml = getYaml();
+    try {{
+      const res = await fetch(PREVIEW_URL, {{
+        method: "POST",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{yaml}})
+      }});
+      if (res.ok) {{
+        const html = await res.text();
+        previewFrame.srcdoc = html;
+      }} else {{
+        const err = await res.json();
+        previewFrame.srcdoc = "<html><body style='background:#111;color:#f88;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.2rem'>" + (err.error || "Preview failed") + "</body></html>";
+      }}
+    }} catch(e) {{
+      previewFrame.srcdoc = "<html><body style='background:#111;color:#f88;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.2rem'>Preview error</body></html>";
+    }}
+  }}
+
+  async function addDashboard() {{
+    const name = prompt("Dashboard name (URL-safe, e.g. living-room):");
+    if (!name || !name.match(/^[a-zA-Z0-9_-]+$/)) {{
+      if (name) setStatus("Invalid name. Use letters, numbers, hyphens, underscores.", "error");
+      return;
+    }}
+    try {{
+      const res = await fetch(LIST_URL, {{
+        method: "POST",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{name}})
+      }});
+      if (res.ok) {{
+        await loadList();
+        await selectDashboard(name);
+        setStatus("Created: " + name, "ok");
+      }} else {{
+        const err = await res.json();
+        setStatus(err.error || "Create failed", "error");
+      }}
+    }} catch(e) {{
+      setStatus("Create error: " + e.message, "error");
+    }}
+  }}
+
+  async function deleteDashboard() {{
+    if (!currentName || !confirm('Delete "' + currentName + '"?')) return;
+    try {{
+      const res = await fetch(LIST_URL + "/" + encodeURIComponent(currentName), {{
+        method: "DELETE"
+      }});
+      if (res.ok) {{
+        currentName = null;
+        if (cm) cm.setValue(""); else ta.value = "";
+        previewFrame.srcdoc = "<html><body style='background:#111;color:#555;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.2rem'>Preview</body></html>";
+        delBtn.style.display = "none";
+        setStatus("Deleted", "ok");
+        await loadList();
+      }} else {{
+        const err = await res.json();
+        setStatus(err.error || "Delete failed", "error");
+      }}
+    }} catch(e) {{
+      setStatus("Delete error: " + e.message, "error");
+    }}
+  }}
+
+  try {{
+    cm = CodeMirror(document.getElementById("editor-container"), {{
+      value: "",
+      mode: "yaml",
+      theme: "default",
+      lineNumbers: true,
+      indentUnit: 2,
+      tabSize: 2,
+      lineWrapping: true,
+      autoCloseBrackets: true,
+      extraKeys: {{"Ctrl-S": () => saveDashboard()}}
+    }});
+    document.getElementById("editor-container").querySelector(".CodeMirror").style.height = "100%";
+  }} catch(e) {{
+    cm = null;
+    ta.style.display = "";
+  }}
+
+  document.getElementById("add-btn").addEventListener("click", addDashboard);
+  document.getElementById("del-btn").addEventListener("click", deleteDashboard);
+  document.getElementById("save-btn").addEventListener("click", saveDashboard);
+  document.getElementById("preview-btn").addEventListener("click", refreshPreview);
+
+  loadList();
+}})();
+</script>
+</body>
+</html>""", headers=_no_cache)
+
+
+@app.get("/_config/dashboards")
+async def config_list():
+    bp = _bp()
+    dashboards = getattr(app.state, "dashboards", {})
+    return [
+        {
+            "name": name,
+            "title": d.title,
+            "url": f"{bp}/d/{name}",
+        }
+        for name, d in sorted(dashboards.items())
+    ]
+
+
+@app.get("/_config/dashboards/{name}.yaml")
+async def config_yaml(name: str):
+    config = getattr(app.state, "config", None)
+    is_addon = config.is_addon if config else False
+    config_dir = config.config_dir if config else "config"
+    data_dir = AppConfig._get_data_dir(is_addon, config_dir)
+    file_path = data_dir / f"{name}.yaml"
+    if not file_path.exists():
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return PlainTextResponse(file_path.read_text())
+
+
+@app.post("/_config/dashboards")
+async def config_create(req: Request):
+    data = await req.json()
+    name = data.get("name", "").strip()
+    if not name or not name.replace("-", "").replace("_", "").isalnum():
+        return JSONResponse({"error": "Invalid name"}, status_code=400)
+
+    config = getattr(app.state, "config", None)
+    is_addon = config.is_addon if config else False
+    config_dir = config.config_dir if config else "config"
+
+    data_dir = AppConfig._get_data_dir(is_addon, config_dir)
+    file_path = data_dir / f"{name}.yaml"
+    if file_path.exists():
+        return JSONResponse({"error": f"Dashboard '{name}' already exists"}, status_code=409)
+
+    try:
+        AppConfig.flush_dashboard_to_disk(name, _NEW_DASHBOARD_TEMPLATE, is_addon, config_dir)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    dashboards = getattr(app.state, "dashboards", {})
+    parsed = parse_dashboard(yaml.safe_load(_NEW_DASHBOARD_TEMPLATE))
+    dashboards[name] = parsed
+
+    bp = _bp()
+    return {
+        "name": name,
+        "title": parsed.title,
+        "url": f"{bp}/d/{name}",
+    }
+
+
+@app.put("/_config/dashboards/{name}")
+async def config_save(name: str, req: Request):
+    data = await req.json()
+    yaml_text = data.get("yaml", "").strip()
+    if not yaml_text:
+        return JSONResponse({"error": "Empty YAML content"}, status_code=400)
+
+    config = getattr(app.state, "config", None)
+    is_addon = config.is_addon if config else False
+    config_dir = config.config_dir if config else "config"
+
+    data_dir = AppConfig._get_data_dir(is_addon, config_dir)
+    file_path = data_dir / f"{name}.yaml"
+    if not file_path.exists():
+        return JSONResponse({"error": f"Dashboard '{name}' not found"}, status_code=404)
+
+    try:
+        AppConfig.flush_dashboard_to_disk(name, yaml_text, is_addon, config_dir)
+    except yaml.YAMLError as e:
+        return JSONResponse({"error": f"YAML parse error: {e}"}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    dashboards = getattr(app.state, "dashboards", {})
+    raw = yaml.safe_load(yaml_text)
+    parsed = parse_dashboard(raw)
+    dashboards[name] = parsed
+    scan_dashboard(parsed)
+
+    return {"ok": True, "title": parsed.title}
+
+
+@app.delete("/_config/dashboards/{name}")
+async def config_delete(name: str):
+    config = getattr(app.state, "config", None)
+    is_addon = config.is_addon if config else False
+    config_dir = config.config_dir if config else "config"
+
+    AppConfig.delete_dashboard_from_disk(name, is_addon, config_dir)
+
+    dashboards = getattr(app.state, "dashboards", {})
+    dashboards.pop(name, None)
+
+    return {"ok": True}
+
+
+@app.post("/_config/preview", response_class=HTMLResponse)
+async def config_preview(req: Request):
+    data = await req.json()
+    yaml_text = data.get("yaml", "").strip()
+    if not yaml_text:
+        return JSONResponse({"error": "Empty YAML"}, status_code=400)
+
+    try:
+        raw = yaml.safe_load(yaml_text)
+        if raw is None:
+            return JSONResponse({"error": "Empty YAML content"}, status_code=400)
+        dashboard = parse_dashboard(raw)
+    except yaml.YAMLError as e:
+        return JSONResponse({"error": f"YAML parse error: {e}"}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    if not dashboard.views:
+        return JSONResponse({"error": "No views in dashboard"}, status_code=400)
+
+    ha = getattr(app.state, "ha_client", None)
+    entity_states = {}
+    entity_icons = {}
+    if ha and ha.is_connected:
+        try:
+            states = await ha.get_states()
+            if states:
+                entity_icons = {
+                    s["entity_id"]: s["attributes"].get("icon", "")
+                    for s in states if s["attributes"].get("icon")
+                }
+                entity_states = {s["entity_id"]: s for s in states}
+        except Exception:
+            pass
+
+    cfg = getattr(app.state, "config", None)
+    ha_url = cfg.ha_url if cfg else ""
+    bp = _bp()
+
+    view = dashboard.views[0]
+    html_out = render_view(view, dashboard, ha_url=ha_url, entity_icons=entity_icons, entity_states=entity_states)
+
+    pages = ''.join(
+        f'<a href="{bp}/d/_preview/view/{html.escape(v.path)}" class="{"active" if v is view else ""}">{html.escape(v.title or v.path)}</a>'
+        for v in dashboard.views
+    )
+    top_bar = f'<div style="display:flex;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:0.85rem">{pages}</div>'
+
+    return HTMLResponse(
+        '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width,initial-scale=1.0">\n<title>Preview</title>\n'
+        '<link rel="stylesheet" href="' + (bp + "/static/style.css" if bp else "/static/style.css") + '">\n'
+        '</head>\n<body>\n'
+        + top_bar +
+        html_out +
+        '</body>\n</html>',
+        headers=_no_cache,
+    )

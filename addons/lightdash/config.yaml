@@ -1,5 +1,5 @@
 name: LightDash
-version: "0.3.7"
+version: "0.4.0"
 slug: lightdash
 description: Lightweight Home Assistant dashboard renderer — define custom dashboards in YAML
 arch:
@@ -17,10 +17,5 @@ ports:
   8000/tcp: null
 ports_description:
   8000/tcp: Direct HTTP access (disable for production)
-options:
-  dashboards: []
-schema:
-  dashboards:
-    - name: str
-      title: str
-      yaml: str
+options: {}
+schema: {}

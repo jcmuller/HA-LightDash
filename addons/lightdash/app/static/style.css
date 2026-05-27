@@ -710,3 +710,52 @@ html, body {
 .entities-card .entity-row.entity-off .entity-state {
   opacity: 0.5;
 }
+
+/* ----- Dashboard Index ----- */
+.dashboard-list {
+  list-style: none;
+  padding: 0;
+}
+.dashboard-list li {
+  margin: 8px 0;
+}
+.dashboard-list a {
+  color: #4fc3f7;
+  text-decoration: none;
+  font-size: 1.15rem;
+  display: block;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #1a1a1a;
+}
+.dashboard-list a:hover {
+  background: #2a2a2a;
+  text-decoration: none;
+}
+.dashboard-list li.empty {
+  color: #888;
+  font-size: 0.95rem;
+}
+.dashboard-list li.empty a {
+  display: inline;
+  padding: 0;
+  background: transparent;
+  color: #4fc3f7;
+  font-size: 0.95rem;
+}
+.dashboard-list li.empty a:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+.config-link {
+  margin-top: 24px;
+  text-align: center;
+}
+.config-link a {
+  color: #666;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+.config-link a:hover {
+  color: #aaa;
+}

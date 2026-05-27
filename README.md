@@ -468,50 +468,45 @@ LightDash is available as a Home Assistant add-on via the GitHub repository.
 
 1. The **LightDash** add-on will now appear in the add-on store
 2. Click **Install** (wait for the download to complete)
-3. Go to the **Configuration** tab
+3. Go to the **Info** tab and click **Start**
+4. LightDash appears in the sidebar as **LightDash**
+5. Click **Open Web UI** to open the dashboard index page
 
-### Dashboard Configuration
+### In-App Editor
 
-Each dashboard is defined as an entry in the `dashboards` list. Add one entry
-per dashboard:
+Dashboards are managed entirely through the in-app editor — no need to paste
+YAML into the add-on Configuration tab (it's empty).
 
-| Field   | Description                                                  |
-|---------|--------------------------------------------------------------|
-| `name`  | URL path segment (e.g. `living-room` → `/d/living-room`)    |
-| `title` | Display title shown in the tab bar                           |
-| `yaml`  | The full dashboard YAML pasted as text in the multiline textarea (see format above) |
+1. Go to **Open Web UI** (or navigate to the LightDash sidebar entry)
+2. Click **⚙ Config** at the bottom of the dashboard index page
+3. Click **+ Add Dashboard** and enter a URL-safe name (e.g. `living-room`)
+4. Edit the YAML in the left pane (CodeMirror syntax-highlighted editor)
+5. Click **Save** — the preview pane updates automatically
+6. Click **Preview** to refresh the preview without saving
 
-Example with two dashboards:
+The config page shows a split view:
 
-```yaml
-dashboards:
-  - name: living-room
-    title: Living Room
-    yaml: |
-      views:
-        - title: Living Room
-          path: main
-          sections:
-            - cards:
-                - type: tile
-                  entity: light.living_room
-  - name: kitchen
-    title: Kitchen
-    yaml: |
-      views:
-        - title: Kitchen
-          path: main
-          sections:
-            - cards:
-                - type: tile
-                  entity: light.kitchen
+```
+┌──────────────────────────────────────────────────────────┐
+│  Dashboard list         CodeMirror YAML    Preview       │
+│                         editor             (iframe)      │
+│  living-room ──active── ┌─────────────────┐              │
+│  kitchen                │ views:           │  [rendered  │
+│                         │   - title: Home  │   view]     │
+│  [+ Add Dashboard]      │     path: home   │              │
+│  [Delete]               │     sections:... │              │
+│                         └─────────────────┘              │
+│                         [Preview] [Save]                  │
+└──────────────────────────────────────────────────────────┘
 ```
 
-### Starting the Add-On
+- **Add Dashboard**: Creates a new YAML file with a starter template
+- **Delete**: Removes the dashboard file entirely
+- **Save**: Writes YAML to disk and reloads the dashboard (available at `/d/{name}`)
+- **Preview**: Renders the current editor content in the right pane
 
-1. Go to the **Info** tab
-2. Click **Start**
-3. LightDash appears in the sidebar as **LightDash**
+Dashboards are stored as individual YAML files in the add-on data directory
+(`/data/dashboards/`), which is included in HA snapshots.
 
 ### Dashboard URLs
 
@@ -526,14 +521,3 @@ The exact URLs are logged in the add-on logs at startup and listed at the
 
 When a new version is released, the add-on shows an **Update** button on the
 Info tab. Click it and then **Restart**.
-
-### Releasing
-
-Before pushing changes, bump the version in `addons/lightdash/config.yaml`
-so Supervisor detects a new build:
-
-```yaml
-version: "0.3.6"   # increment each push
-```
-
-Then commit and push to trigger a rebuild in Supervisor.
