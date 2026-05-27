@@ -533,7 +533,7 @@ Before pushing changes, bump the version in `lightdash/config.yaml`
 so Supervisor detects a new build:
 
 ```yaml
-version: "0.3.5"   # increment each push
+version: "0.3.4"   # increment each push
 ```
 
 Then commit and push to trigger a rebuild in Supervisor.
