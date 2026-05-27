@@ -490,6 +490,13 @@ async def config_page():
   #rename-btn:hover {{
     background: #3a3a3a;
   }}
+  #url-btn {{
+    background: #2a3a2a;
+    color: #8c8;
+  }}
+  #url-btn:hover {{
+    background: #3a4a3a;
+  }}
   #preview-pane {{
     border-left: 1px solid #2a2a2a;
     background: #111;
@@ -516,6 +523,7 @@ async def config_page():
     <div id="status-bar">
       <span id="status-msg">Select a dashboard to edit</span>
       <button id="preview-btn">Preview</button>
+      <button id="url-btn">Public URL</button>
       <button id="save-btn">Save</button>
     </div>
   </main>
@@ -733,6 +741,15 @@ const PREVIEW_URL = BASE + "/_config/preview";
   document.getElementById("rename-btn").addEventListener("click", renameDashboard);
   document.getElementById("save-btn").addEventListener("click", saveDashboard);
   document.getElementById("preview-btn").addEventListener("click", refreshPreview);
+  document.getElementById("url-btn").addEventListener("click", function(){{
+    if(!currentName){{setStatus("Select a dashboard first","error");return}}
+    var url = window.location.origin + BASE + "/d/" + encodeURIComponent(currentName);
+    navigator.clipboard.writeText(url).then(function(){{
+      setStatus("Copied: " + url, "ok");
+    }}).catch(function(){{
+      setStatus("Failed to copy URL", "error");
+    }});
+  }});
 
   loadList();
 }})();
