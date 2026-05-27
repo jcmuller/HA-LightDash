@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     app.state.ha_client = ha_client
     app.state.sse = sse
     app.state.base_path = config.base_path
+    app.state.public_port = config.public_port
 
     logger.info("base_path=%r is_addon=%s", config.base_path, config.is_addon)
 
@@ -93,8 +94,11 @@ def _bp() -> str:
 @app.middleware("http")
 async def detect_ingress(request: Request, call_next):
     import app.renderer as r
-    bp = getattr(app.state, "base_path", "")
-    via_ingress = bool(bp) and request.url.path.startswith(bp)
+    public_port = getattr(app.state, "public_port", "")
+    via_ingress = True
+    if public_port:
+        host = request.headers.get("host", "")
+        via_ingress = not host.endswith(f":{public_port}")
     r._via_ingress.set(via_ingress)
     response = await call_next(request)
     return response
