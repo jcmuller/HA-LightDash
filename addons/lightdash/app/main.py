@@ -160,6 +160,23 @@ async def dashboard_index(name: str):
 
 @app.get("/d/{name}/view/{view_path:path}", response_class=HTMLResponse)
 async def dashboard_view(name: str, view_path: str):
+    if name == "_preview":
+        preview = getattr(app.state, "preview_data", None)
+        if not preview:
+            return HTMLResponse(render_error("No preview available"), status_code=404, headers=_no_cache)
+        dashboard = preview["dashboard"]
+        cfg = getattr(app.state, "config", None)
+        ha_url = preview.get("ha_url") or (cfg.ha_url if cfg else "")
+        entity_icons = preview.get("entity_icons", {})
+        entity_states = preview.get("entity_states", {})
+        for v in dashboard.views:
+            if v.path == view_path:
+                return HTMLResponse(
+                    render_view(v, dashboard, ha_url=ha_url, entity_icons=entity_icons, entity_states=entity_states, dashboard_name="_preview"),
+                    headers=_no_cache,
+                )
+        return HTMLResponse(render_error(f"View '{view_path}' not found"), status_code=404, headers=_no_cache)
+
     dashboard = app.state.dashboards.get(name)
     if not dashboard:
         return HTMLResponse(
@@ -970,8 +987,15 @@ async def config_preview(req: Request):
     ha_url = cfg.ha_url if cfg else ""
     bp = _bp()
 
+    app.state.preview_data = {
+        "dashboard": dashboard,
+        "entity_icons": entity_icons,
+        "entity_states": entity_states,
+        "ha_url": ha_url,
+    }
+
     view = dashboard.views[0]
-    html_out = render_view(view, dashboard, ha_url=ha_url, entity_icons=entity_icons, entity_states=entity_states)
+    html_out = render_view(view, dashboard, ha_url=ha_url, entity_icons=entity_icons, entity_states=entity_states, dashboard_name="_preview")
 
     pages = ''.join(
         f'<a href="{bp}/d/_preview/view/{html.escape(v.path)}" class="{"active" if v is view else ""}">{html.escape(v.title or v.path)}</a>'
