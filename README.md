@@ -1,27 +1,21 @@
 LightDash
 =========
 
-A lightweight, self-contained dashboard renderer for Home Assistant. Define
-dashboards in YAML — LightDash renders them as a single-page app with live
-entity state updates via SSE, toggle switches, brightness sliders, and more.
+A lightweight, self-contained dashboard renderer for Home Assistant. Instead of running HA's full Lovelace frontend, which is a struggle for low-power devices such as NSPanels and older Android tablets, LightDash is a focused alternative: support for tiles and built-in entities, intelligent mapping of some common custom cards to lightweight alternatives, and plain HTML + CSS with much of the interactivity shifted to the addon itself.
 
-Instead of running HA's full Lovelace frontend, LightDash is a focused,
-low-ceremony alternative: no Node.js build step, no custom-card compatibility
-matrix, just plain HTML + CSS + htmx served from a Python/FastAPI process.
+I orignally built LightDash to run on the NSPanel Pro in-wall touchscreens I have around my house, which are getting increasingly slow as the HA team add more dashboard capabilities. Wonderful for iPads, desktop browsing and recent smartphones, but almost unusable on the devices that sit in the gap between ESPHome and modern browsers.
 
+LightDash is designed to handle copy-and-pasted YAML from existing dashboards with _minimal_ (not quite zero) adjustment - there's an edit-and-preview web UI accessible from the addon control panel, where you can tweak the YAML and see the results immediately before saving.
+
+Caveat 1: I've focused on the cards I use in my own small-screen dashboards. I'd love for contributors to add support for their own layouts!
+Caveat 2: Yep, I used OpenCode to build a lot of this. I'm a 25+ year software architect and developer, but this is a one-day project. I'm pretty happy it's not filled with slop - I've reviewed it and it's passable - but I make no warranties about code quality this early in its life.
 
 Installation
 ------------
 
-### Prerequisites
-
-- Home Assistant OS or Supervised installation
-- The [`homeassistant_api: true`](https://www.home-assistant.io/common-tasks/supervised/#home-assistant-api-proxy)
-  Supervisor flag is enabled automatically when the add-on is installed
-
 ### Add the Repository
 
-1. Go to **Settings → Add-ons → Add-on Store**
+1. Go to **Settings → Apps → Install app**
 2. Click the **⋮** menu (top-right) and select **Repositories**
 3. Paste `https://github.com/richkershaw/HA-LightDash`
 4. Click **Add**
@@ -31,7 +25,8 @@ Installation
 1. The **LightDash** add-on appears in the store
 2. Click **Install** and wait for the download to complete
 3. Go to the **Info** tab and click **Start**
-4. LightDash appears in the sidebar — click it to open the dashboard index
+4. Toggle **Show in sidebar** to add the LightDash item
+4. Go to **LightDash** in the sidebar to start setting up dashboards
 
 **No manual configuration needed.** Dashboards are managed through the
 in-app editor (see [In-App Editor](#in-app-editor) below).
@@ -44,16 +39,15 @@ LightDash serves dashboards via two methods. Both work simultaneously.
 
 ### Via the HA Sidebar (Ingress)
 
-After starting the add-on, click the **LightDash** sidebar entry. This opens
-the dashboard index page within the HA interface. All auth is handled by the
-Supervisor proxy — no separate login required.
+After starting the add-on, click the **Open Web UI** button or the LightDash sidebar entry. This opens
+the dashboard index page within the HA interface. This is fine for devices you're happy to login on regularly.
 
 ### Via Direct Port (HTTP, No Auth)
 
 The add-on also exposes a raw HTTP port (`8001` by default). Any device on
 your LAN can reach it without Home Assistant authentication:
 
-    http://homeassistant.local:8001/
+    http://[your HA server]]:8001/
 
 This is useful for:
 - **Wall-mounted tablets** that shouldn't show a login screen
@@ -81,8 +75,8 @@ Each dashboard is available at:
 
 Where `{base}` depends on the access method:
 
-- **Ingress (sidebar):** `https://ha-instance/api/hassio_ingress/{token}/d/{name}`
-- **Direct port:** `http://ha-instance:8001/d/{name}`
+- **Ingress:** `https://[your HA server]/api/hassio_ingress/{token}/d/{dashboard name}`
+- **Direct port:** `http://[your HA server]:8001/d/{dashboard name}`
 
 The exact URLs are logged in the add-on logs at startup and listed at the
 `/dashboards` endpoint. Use the **Public URL** button in the config editor
@@ -92,15 +86,15 @@ to copy the external URL for the current dashboard.
 In-App Editor
 -------------
 
-Dashboards are managed entirely through the in-app editor — no need to paste
-YAML into the add-on Configuration tab (it's empty).
+Dashboards are managed entirely through the in-app editor.
 
 1. Open the LightDash sidebar entry (or navigate to the dashboard index)
 2. Click **⚙ Config** at the bottom of the page
 3. Click **+ Add Dashboard** and enter a URL-safe name (e.g. `living-room`)
-4. Edit the YAML in the left pane (CodeMirror syntax-highlighted editor)
+4. Edit the YAML in the left pane
 5. Click **Save** — the preview pane updates automatically
 6. Click **Preview** to refresh the preview without saving
+7. Click **Public URL** to copy the externally-available URL to add to your kiosk devices' config
 
 The config page shows a split view:
 
@@ -109,12 +103,12 @@ The config page shows a split view:
 │  Dashboard list         CodeMirror YAML    Preview       │
 │                         editor             (iframe)      │
 │  living-room ──active── ┌─────────────────┐              │
-│  kitchen                │ views:           │  [rendered  │
-│                         │   - title: Home  │   view]     │
-│  [+ Add Dashboard]      │     path: home   │              │
-│  [Delete]               │     sections:... │              │
+│  kitchen                │ views:          │   [rendered  │
+│                         │   - title: Home │    view]     │
+│  [+ Add Dashboard]      │     path: home  │              │
+│  [Delete]               │     sections:...│              │
 │                         └─────────────────┘              │
-│                         [Preview] [Save]                  │
+│                         [Preview] [Save]                 │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -165,6 +159,8 @@ views:
 | `views`     | List of views                                      |
 
 ### lightdash config
+
+You can optionally fix the container size - useful for small-screen devices, and previewing rendering.
 
 ```yaml
 lightdash:
