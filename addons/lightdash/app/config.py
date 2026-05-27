@@ -53,8 +53,8 @@ class AppConfig:
             base_path = cls._resolve_ingress_path(ha_token)
             config_dir = ""
             options = cls._load_options()
-            public_host = options.get("public_host", "")
-            public_port = options.get("public_port", "")
+            public_host = options.get("public_host", "") or cls._resolve_public_host(ha_token)
+            public_port = options.get("public_port", "") or "8001"
         else:
             ha_url = os.getenv("HA_URL", "")
             ha_token = os.getenv("HA_TOKEN", "")
@@ -84,6 +84,28 @@ class AppConfig:
         if self.public_host and self.public_port:
             return f"http://{self.public_host}:{self.public_port}"
         return ""
+
+    @classmethod
+    def _resolve_public_host(cls, ha_token: str) -> str:
+        """Detect the HA hostname from the Supervisor API for direct-port URL."""
+        try:
+            import httpx
+            resp = httpx.get(
+                "http://supervisor/addons/self/info",
+                headers={"Authorization": f"Bearer {ha_token}"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                ingress_url = data.get("data", {}).get("ingress_url", "")
+                if ingress_url:
+                    host = urlparse(ingress_url).hostname or ""
+                    if host:
+                        logger.info("Detected public hostname from ingress URL: %s", host)
+                        return host
+        except Exception as e:
+            logger.debug("Could not detect public hostname: %s", e)
+        return os.getenv("PUBLIC_HOST", "")
 
     @classmethod
     def _resolve_ingress_path(cls, ha_token: str) -> str:

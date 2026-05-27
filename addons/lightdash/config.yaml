@@ -1,5 +1,5 @@
 name: LightDash
-version: "0.5.3"
+version: "0.6.1"
 slug: lightdash
 description: Lightweight Home Assistant dashboard renderer — define custom dashboards in YAML
 arch:
@@ -14,12 +14,12 @@ panel_title: LightDash
 startup: application
 boot: auto
 ports:
-  8000/tcp: null
+  8000/tcp: 8001
 ports_description:
-  8000/tcp: Direct HTTP access (disable for production)
+  8000/tcp: Direct HTTP access (disable for production — open port outside LAN)
 options:
   public_host: ""
-  public_port: ""
+  public_port: "8001"
 schema:
   public_host: str
   public_port: str

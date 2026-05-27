@@ -1,3 +1,4 @@
+title: Kitchen
 lightdash:
   container_width: 480px
   container_height: 480px
@@ -49,6 +50,9 @@ views:
             entities:
               - entity: light.kitchen_main_lights
                 name: Kitchen
+              - entity: light.kitchen_counters
+                name: Counters
+                secondary_info: none
               - entity: light.coffee_bar_light_strip
                 name: Coffee Bar
                 secondary_info: none
