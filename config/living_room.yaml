@@ -1,6 +1,8 @@
+kiosk_mode:
+  hide_header: true
 views:
   - type: sections
-    max_columns: 12
+    max_columns: 1
     background:
       image: /api/image/serve/df6d99dadd42ccd63e0d444628af8b75/original
     title: Home
@@ -69,15 +71,45 @@ views:
             grid_options:
               columns: 6
               rows: auto
-          - type: custom:mushroom-template-card
-            primary: Other rooms
-            secondary: ''
+          - type: button
+            name: Other rooms
             icon: mdi:arrow-right-bold
-            icon_color: '#FFFFFF'
-            layout: horizontal
             tap_action:
               action: navigate
-              navigation_path: /nspanel-hallway/other-rooms
+              navigation_path: other-rooms
             grid_options:
               columns: 12
               rows: 1
+  - type: sections
+    background:
+      image: /api/image/serve/df6d99dadd42ccd63e0d444628af8b75/original
+    max_columns: 4
+    title: Other Rooms
+    path: other-rooms
+    sections:
+      - type: entities
+        entities:
+          - name: Workshop
+            entity: light.workshop
+          - name: Upstairs Hallway
+            entity: light.upstairs_hallway
+          - name: Office All Lights
+            entity: light.office_all_lights
+          - name: Emmetts Room
+            entity: light.emmetts_room
+          - name: Bathroom
+            entity: light.bathroom_2
+          - name: Master Bathroom
+            entity: light.master_bathroom
+          - name: Master Bedroom
+            entity: light.master_bedroom
+          - name: Master Bedroom Landing
+            entity: light.master_bedroom_landing
+          - type: button
+            name: Back
+            icon: mdi:arrow-left-bold
+            tap_action:
+              action: navigate
+              navigation_path: home
+            grid_options:
+              columns: 12

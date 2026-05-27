@@ -6,17 +6,15 @@ import logging
 import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import AppConfig
 from app.ha_client import HAClient
-from app.parser import parse_dashboard_from_api, parse_dashboard_from_file
-from app.renderer import render_view, render_view_index
+from app.renderer import render_error, render_view, render_view_index
 from app.sse_manager import SSEManager
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -32,37 +30,23 @@ async def lifespan(app: FastAPI):
     ha_client = HAClient(config.ha_url, config.ha_token)
     connected = await ha_client.connect()
 
-    dashboard = None
-
-    if connected:
-        try:
-            raw = await ha_client.get_dashboard_config(config.dashboard_path)
-            if raw:
-                dashboard = parse_dashboard_from_api(raw)
-                logger.info("Fetched dashboard '%s' from HA (%d views)", config.dashboard_path, len(dashboard.views))
-        except Exception as e:
-            logger.warning("Failed to fetch dashboard from HA: %s", e)
-
-    if dashboard is None and config.config_path and config.config_path.exists():
-        try:
-            dashboard = parse_dashboard_from_file(str(config.config_path))
-            logger.info("Loaded config from %s (development fallback)", config.config_path)
-        except Exception as e:
-            logger.warning("Failed to load development config: %s", e)
-
-    if dashboard is None:
-        logger.warning("No dashboard loaded — no views available")
-
     if not connected:
         logger.info("Running in offline mode — HA features disabled")
 
     sse = SSEManager()
     task = asyncio.create_task(sse.run_ha_websocket(config.ha_url, config.ha_token))
 
+    dashboards = AppConfig.load_dashboards(config.config_dir, config.is_addon)
+    logger.info("Loaded %d dashboard(s): %s", len(dashboards), list(dashboards.keys()))
+
     app.state.config = config
-    app.state.dashboard = dashboard
+    app.state.dashboards = dashboards
     app.state.ha_client = ha_client
     app.state.sse = sse
+    app.state.base_path = config.base_path
+
+    import app.renderer as r
+    r._base_path = config.base_path
 
     yield
 
@@ -81,33 +65,52 @@ static_dir = APP_DIR / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-
-_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+_no_cache = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    dashboard = getattr(app.state, "dashboard", None)
-    if dashboard and dashboard.views:
-        return HTMLResponse(render_view_index(dashboard.views), headers=_NO_CACHE)
+    bp = getattr(app.state, "base_path", "")
+    css = bp + "/static/style.css" if bp else "/static/style.css"
     return HTMLResponse(
-        '<html><body style="background:#111;color:#eee;padding:20px;font-family:sans-serif">'
-        "<h1>LightDash</h1><p>No dashboard config loaded.</p></body></html>",
-        headers=_NO_CACHE,
+        '<!DOCTYPE html>'
+        '<html lang="en">'
+        '<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">'
+        '<title>LightDash</title>'
+        '<link rel="stylesheet" href="' + css + '">'
+        '</head>'
+        '<body>'
+        '<div class="view-index">'
+        '<h1>LightDash</h1>'
+        '<p>Go to <code>/d/{dashboard_name}</code> to load a dashboard.</p>'
+        '</div>'
+        '</body>'
+        '</html>',
+        headers=_no_cache,
     )
 
 
-@app.get("/health")
-async def health():
-    ha_ok = getattr(app.state, "ha_client", None) and app.state.ha_client.is_connected
-    return {"status": "ok", "ha_connected": ha_ok}
-
-
-@app.get("/view/{view_path:path}", response_class=HTMLResponse)
-async def view(view_path: str):
-    dashboard = getattr(app.state, "dashboard", None)
+@app.get("/d/{name}", response_class=HTMLResponse)
+async def dashboard_index(name: str):
+    dashboard = app.state.dashboards.get(name)
     if not dashboard:
-        return HTMLResponse("<html><body><h1>No config loaded</h1></body></html>", status_code=503, headers=_NO_CACHE)
+        return HTMLResponse(
+            render_error(f"Dashboard '{name}' not found."),
+            status_code=404,
+            headers=_no_cache,
+        )
+    return HTMLResponse(render_view_index(dashboard.views, dashboard_name=name), headers=_no_cache)
+
+
+@app.get("/d/{name}/view/{view_path:path}", response_class=HTMLResponse)
+async def dashboard_view(name: str, view_path: str):
+    dashboard = app.state.dashboards.get(name)
+    if not dashboard:
+        return HTMLResponse(
+            render_error(f"Dashboard '{name}' not found."),
+            status_code=404,
+            headers=_no_cache,
+        )
 
     cfg = getattr(app.state, "config", None)
     ha_url = cfg.ha_url if cfg else ""
@@ -125,11 +128,27 @@ async def view(view_path: str):
     for v in dashboard.views:
         if v.path == view_path:
             return HTMLResponse(
-                render_view(v, dashboard, ha_url=ha_url, entity_icons=entity_icons),
-                headers=_NO_CACHE,
+                render_view(v, dashboard, ha_url=ha_url, entity_icons=entity_icons, dashboard_name=name),
+                headers=_no_cache,
             )
 
-    return RedirectResponse(url="/", status_code=302, headers=_NO_CACHE)
+    return HTMLResponse(
+        render_error(f"View '{view_path}' not found in dashboard '{name}'."),
+        status_code=404,
+        headers=_no_cache,
+    )
+
+
+@app.get("/health")
+async def health():
+    ha = getattr(app.state, "ha_client", None)
+    ha_ok = ha and ha.is_connected
+    dashboards = getattr(app.state, "dashboards", {})
+    return {
+        "status": "ok",
+        "ha_connected": ha_ok,
+        "dashboards_loaded": len(dashboards),
+    }
 
 
 @app.post("/action")
@@ -248,21 +267,3 @@ async def api_history(entity_id: str, hours: int = 24):
         return {"error": "HA not connected"}
     history = await ha.get_history(entity_id, hours)
     return history or []
-
-
-@app.get("/api/dashboard")
-async def api_dashboard():
-    dashboard = getattr(app.state, "dashboard", None)
-    if not dashboard:
-        return {"error": "No dashboard loaded"}
-    return JSONResponse(_dashboard_to_dict(dashboard))
-
-
-def _dashboard_to_dict(dashboard) -> Dict:
-    views_data = []
-    for v in dashboard.views:
-        cards_data = []
-        for c in v.cards:
-            cards_data.append({"type": c.type, **c.config})
-        views_data.append({"title": v.title, "path": v.path, "icon": v.icon, "badges": v.badges, "cards": cards_data, "type": v.type, "bg_color": v.bg_color})
-    return {"title": dashboard.title, "views": views_data}

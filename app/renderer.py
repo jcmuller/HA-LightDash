@@ -51,7 +51,13 @@ _DEFAULT_ICONS: Dict[str, str] = {
 
 _entity_icons: Dict[str, str] = {}
 _ha_url: str = ""
+_dashboard_name: str = ""
+_base_path: str = ""
 _icon_svg_cache: Dict[str, str] = {}
+
+
+def _url(path: str) -> str:
+    return _base_path + path if _base_path else path
 
 
 def register(type_name: str):
@@ -61,10 +67,11 @@ def register(type_name: str):
     return decorator
 
 
-def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons: Optional[dict] = None) -> str:
-    global _entity_icons, _ha_url
+def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons: Optional[dict] = None, dashboard_name: str = "") -> str:
+    global _entity_icons, _ha_url, _dashboard_name
     _entity_icons = entity_icons or {}
     _ha_url = ha_url or ""
+    _dashboard_name = dashboard_name or ""
 
     _prefetch_icons(view)
 
@@ -96,10 +103,15 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
     if _view_needs_toggle_sync(view):
         head_extra += (
             '<script>\n'
-            'function st(){document.querySelectorAll(".tile-card .entity-state").forEach(function(e){'
-            'var t=e.closest(".tile-card").querySelector(".toggle-input");'
-            'if(t)t.checked=e.textContent.trim()==="on";})}\n'
-            'document.addEventListener("DOMContentLoaded",st);\n'
+            'function st(){'
+            'document.querySelectorAll(".tile-card").forEach(function(e){'
+            'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
+            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            '});'
+            'document.querySelectorAll(".entities-card .entity-row").forEach(function(e){'
+            'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
+            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            '});}\n'
             'document.addEventListener("htmx:afterSwap",st);\n'
             'document.addEventListener("htmx:sseMessage",st);\n'
             '</script>\n'
@@ -125,13 +137,13 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
         '<meta charset="UTF-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">\n'
         '<title>' + title + '</title>\n'
-        '<link rel="stylesheet" href="/static/style.css">\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
         '<script src="https://unpkg.com/htmx.org@2.0.4"></script>\n'
         '<script src="https://unpkg.com/htmx-ext-sse@2.2.4/dist/sse.js"></script>\n'
         + head_extra +
         '</head>\n'
         '<body>\n'
-        '<div class="lv-view" id="view-' + path + '" hx-ext="sse" sse-connect="/_sse" style="' + bg + '">\n'
+        '<div class="lv-view" id="view-' + path + '" hx-ext="sse" sse-connect="' + _url("/_sse") + '" style="' + bg + '">\n'
         + cards_html + '\n'
         '</div>\n'
         '</body>\n'
@@ -150,6 +162,10 @@ def _render_section(section: Section, indent: int = 2) -> str:
         if isinstance(go, dict):
             span_col = go.get("columns", 0)
             span_row = go.get("rows", 0)
+        if not isinstance(span_col, int):
+            span_col = 0
+        if not isinstance(span_row, int):
+            span_row = 0
         cell_style = ""
         if span_col:
             cell_style += f"grid-column: span {min(span_col, cols)};"
@@ -173,15 +189,16 @@ def _section_col_count(section: Section) -> int:
         go = c.get("grid_options")
         if isinstance(go, dict):
             span = go.get("columns", 0)
-            if span > max_col:
+            if isinstance(span, int) and span > max_col:
                 max_col = span
     return max(max_col, 3)
 
 
-def render_view_index(views: List[View]) -> str:
+def render_view_index(views: List[View], dashboard_name: str = "") -> str:
     links = ""
     for v in views:
-        links += '    <li><a href="/view/' + html.escape(v.path) + '">'
+        href = _url(f"/d/{html.escape(dashboard_name)}/view/{html.escape(v.path)}") if dashboard_name else _url("/view/" + html.escape(v.path))
+        links += '    <li><a href="' + href + '">'
         if v.icon:
             links += '<span class="vi">' + html.escape(v.icon) + "</span> "
         links += html.escape(v.title or v.path) + "</a></li>\n"
@@ -192,7 +209,7 @@ def render_view_index(views: List[View]) -> str:
         '<meta charset="UTF-8">\n'
         '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
         '<title>LightDash</title>\n'
-        '<link rel="stylesheet" href="/static/style.css">\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
         '</head>\n'
         '<body>\n'
         '<div class="view-index">\n'
@@ -200,6 +217,59 @@ def render_view_index(views: List[View]) -> str:
         '<ul>\n'
         + links +
         '</ul>\n'
+        '</div>\n'
+        '</body>\n'
+        '</html>'
+    )
+
+
+def render_dashboard_index(dashboards: List[Dict[str, str]]) -> str:
+    links = ""
+    for d in dashboards:
+        name = d.get("url_path", d.get("title", "?"))
+        title = d.get("title", name)
+        href = _url("/d/" + html.escape(name))
+        links += '    <li><a href="' + href + '">' + html.escape(title) + " (" + html.escape(name) + ")</a></li>\n"
+    return (
+        '<!DOCTYPE html>\n'
+        '<html lang="en">\n'
+        '<head>\n'
+        '<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
+        '<title>LightDash</title>\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        '</head>\n'
+        '<body>\n'
+        '<div class="view-index">\n'
+        '<h1>LightDash</h1>\n'
+        '<p>Select a dashboard:</p>\n'
+        '<ul>\n'
+        + links +
+        '</ul>\n'
+        '</div>\n'
+        '</body>\n'
+        '</html>'
+    )
+
+
+def render_error(message: str) -> str:
+    msg = html.escape(message)
+    return (
+        '<!DOCTYPE html>\n'
+        '<html lang="en">\n'
+        '<head>\n'
+        '<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
+        '<title>LightDash - Error</title>\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        '</head>\n'
+        '<body>\n'
+        '<div class="view-index">\n'
+        '<h1>LightDash</h1>\n'
+        '<div class="error-card" style="background:#3a1a1a;border:1px solid #c44;padding:20px;border-radius:8px;color:#f88">'
+        + msg +
+        '</div>\n'
+        '<p><a href="' + _url("/") + '" style="color:#88f">Back to dashboards</a></p>\n'
         '</div>\n'
         '</body>\n'
         '</html>'
@@ -283,7 +353,7 @@ def _entity_span(entity_id: str, card_id: str = "", indent: int = 0) -> str:
     attrs: Dict[str, str] = {
         "class": "entity-state",
         "id": f"state-{sid}",
-        "hx-get": f"/api/value/{sid}",
+        "hx-get": _url(f"/api/value/{sid}"),
         "hx-trigger": "load",
         "hx-swap": "innerHTML",
     }
@@ -381,7 +451,7 @@ def _tap_action_attrs(card: Card) -> Dict[str, str]:
         domain = eid.split(".")[0] if "." in eid else ""
         svc = _domain_toggle_service(domain)
         return {
-            "hx-post": "/action",
+            "hx-post": _url("/action"),
             "hx-trigger": "click",
             "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
             "hx-swap": "none",
@@ -389,13 +459,14 @@ def _tap_action_attrs(card: Card) -> Dict[str, str]:
     if a.action == "call-service":
         target = a.target or {}
         return {
-            "hx-post": "/action",
+            "hx-post": _url("/action"),
             "hx-trigger": "click",
             "hx-vals": _js_obj(action="call-service", service=a.service, target=target, data=a.data or {}),
             "hx-swap": "none",
         }
     if a.action == "navigate":
-        return {"hx-get": "/view/" + html.escape(a.navigation_path), "hx-target": "body", "hx-push-url": "true", "hx-trigger": "click"}
+        path = _url("/d/" + html.escape(_dashboard_name) + "/view/" + html.escape(a.navigation_path))
+        return {"hx-get": path, "hx-target": "body", "hx-push-url": "true", "hx-trigger": "click"}
     if a.action == "url":
         return {"onclick": "window.open('" + html.escape(a.url_path) + "','_blank')"}
     return {}
@@ -407,7 +478,7 @@ def _action_attrs(entity_id: str, action: str) -> Dict[str, str]:
         domain = entity_id.split(".")[0] if "." in entity_id else ""
         service = _domain_toggle_service(domain)
     return {
-        "hx-post": "/action",
+        "hx-post": _url("/action"),
         "hx-trigger": "click",
         "hx-vals": _js_obj(entity_id=entity_id, action=action, service=service),
         "hx-swap": "none",
@@ -532,8 +603,18 @@ def _render_entities(card: Card, indent: int = 2) -> str:
             rows += _SP * (indent + 1) + '<div class="entities-section-header">' + section + '</div>\n'
             continue
         row_controls = _render_cover_controls(eid, indent + 2) or _render_entity_toggle(eid, indent + 2)
+        row_attrs: Dict[str, str] = {"class": "entity-row"}
+        if _is_binary_domain(eid) and eid.split(".")[0] != "cover":
+            dom = eid.split(".")[0]
+            svc = _domain_toggle_service(dom)
+            row_attrs.update({
+                "hx-post": _url("/action"),
+                "hx-trigger": "click",
+                "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
+                "hx-swap": "none",
+            })
         rows += (
-            _SP * (indent + 1) + '<div class="entity-row">\n'
+            _SP * (indent + 1) + '<div' + _build_attrs(row_attrs) + '>\n'
             + _SP * (indent + 2) + '<div class="entity-icon">' + icon + '</div>\n'
             + _SP * (indent + 2) + '<div class="entity-info">\n'
             + _SP * (indent + 3) + '<div class="entity-name">' + html.escape(ename) + '</div>\n'
@@ -631,7 +712,7 @@ def _render_tile(card: Card, indent: int = 2) -> str:
         dom = eid.split(".")[0] if "." in eid else ""
         svc = _domain_toggle_service(dom)
         toggle_attrs = {
-            "hx-post": "/action",
+            "hx-post": _url("/action"),
             "hx-trigger": "change",
             "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
             "hx-swap": "none",
@@ -704,7 +785,7 @@ def _render_features(card: Card, indent: int, inline: bool = False) -> str:
                 + _SP * (indent + 2) + '<span class="feature-label">Brightness</span>\n'
                 + _SP * (indent + 2) + '<input type="range" class="feature-slider" min="0" max="100" '
                 + _build_attrs({
-                    "hx-post": "/action",
+                    "hx-post": _url("/action"),
                     "hx-trigger": "change",
                     "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
                     "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
@@ -719,7 +800,7 @@ def _render_features(card: Card, indent: int, inline: bool = False) -> str:
                 + _SP * (indent + 2) + '<span class="feature-label">Color Temp</span>\n'
                 + _SP * (indent + 2) + '<input type="range" class="feature-slider" min="153" max="500" '
                 + _build_attrs({
-                    "hx-post": "/action",
+                    "hx-post": _url("/action"),
                     "hx-trigger": "change",
                     "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
                     "hx-vals-js": '{"data": {"color_temp": parseInt(event.target.value)}}',
@@ -730,13 +811,13 @@ def _render_features(card: Card, indent: int, inline: bool = False) -> str:
         elif ftype == "numeric-input":
             eid = card.get("entity", "")
             dec_attrs = {
-                "hx-post": "/action",
+                "hx-post": _url("/action"),
                 "hx-trigger": "click",
                 "hx-vals": _js_obj(entity_id=eid, action="call-service", service="input_number.decrement"),
                 "hx-swap": "none",
             }
             inc_attrs = {
-                "hx-post": "/action",
+                "hx-post": _url("/action"),
                 "hx-trigger": "click",
                 "hx-vals": _js_obj(entity_id=eid, action="call-service", service="input_number.increment"),
                 "hx-swap": "none",
@@ -765,7 +846,7 @@ def _render_cover_controls(entity_id: str, indent: int) -> str:
     html_out = _SP * indent + '<div class="cover-controls">\n'
     for label, svc, aria in [("▲", "cover.open_cover", "Open"), ("⏹", "cover.stop_cover", "Stop"), ("▼", "cover.close_cover", "Close")]:
         attrs = {
-            "hx-post": "/action",
+            "hx-post": _url("/action"),
             "hx-trigger": "click",
             "hx-vals": _js_obj(entity_id=entity_id, action="call-service", service=svc),
             "hx-swap": "none",
@@ -787,7 +868,7 @@ def _render_entity_toggle(entity_id: str, indent: int) -> str:
         return ""
     svc = _domain_toggle_service(dom)
     toggle_attrs = {
-        "hx-post": "/action",
+        "hx-post": _url("/action"),
         "hx-trigger": "change",
         "hx-vals": _js_obj(entity_id=entity_id, action="toggle", service=svc),
         "hx-swap": "none",
@@ -879,7 +960,7 @@ def _render_light(card: Card, indent: int = 2) -> str:
         + _SP * (indent + 2) + '</div>\n'
         + _SP * (indent + 2) + '<input type="range" class="light-slider" min="0" max="100" value="0" '
         + _build_attrs({
-            "hx-post": "/action",
+            "hx-post": _url("/action"),
             "hx-trigger": "change",
             "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
             "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',

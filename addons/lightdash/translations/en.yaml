@@ -1,0 +1,5 @@
+configuration:
+  dashboards:
+    name: Dashboard name (used in URL)
+    title: Display title
+    yaml: Dashboard YAML configuration

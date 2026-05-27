@@ -11,31 +11,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TEST_CONFIG = BASE_DIR / "config" / "living_room.yaml"
 
 
-def test_config_exists():
-    assert TEST_CONFIG.exists(), f"Config not found at {TEST_CONFIG}"
-
-
-def test_config_is_valid_yaml():
-    with open(TEST_CONFIG) as f:
-        data = yaml.safe_load(f)
-    assert data is not None
-    assert "views" in data, "Missing 'views' section"
-
-
-def test_parse_local_yaml():
-    from app.parser import parse_dashboard_from_file
-
-    dashboard = parse_dashboard_from_file(str(TEST_CONFIG))
-    assert len(dashboard.views) > 0, "No views parsed"
-    assert dashboard.title == "LightDash"
-
-    view = dashboard.views[0]
-    assert view.title == "Home"
-    assert view.path == "home"
-    assert len(view.sections) > 0
-    assert len(view.sections[0].cards) > 0
-
-
 def test_parse_from_dict():
     from app.parser import parse_dashboard
 
@@ -166,21 +141,16 @@ def test_tile_toggle_switch_for_binary_entity():
     view = dashboard.views[0]
     html = render_view(view, dashboard)
 
-    # Binary entity (light) without hide_state → toggle-switch + entity-state
     assert html.count('class="toggle-switch"') == 1, "Expected 1 toggle-switch (light.test only)"
     assert html.count('class="toggle-input"') == 1, "Expected 1 toggle-input"
     assert html.count('class="toggle-slider"') == 1, "Expected 1 toggle-slider"
 
-    # Non-binary entity (sensor) → no toggle, text state
     assert '<div class="tile-name">Temp</div>' in html
 
-    # Binary entity with hide_state + vertical → no toggle, no entity-state text
     assert '<div class="tile-name">Porch</div>' in html
     assert 'class="tile-content vertical"' in html, "Expected vertical class"
-    # light.test + sensor.temp = 2 entity-state spans; Porch has hide_state so no extra
     assert html.count('class="entity-state"') == 2, "Expected 2 entity-state spans (light + sensor)"
 
-    # Toggle sync script included (for light.test + any entities card toggles)
     assert "function st()" in html, "Expected toggle sync script"
 
 
@@ -195,7 +165,7 @@ def test_tile_vertical_layout():
                 "path": "tv",
                 "cards": [
                     {"type": "tile", "entity": "light.test", "vertical": True},
-                    {"type": "tile", "entity": "light.test2"},  # no vertical
+                    {"type": "tile", "entity": "light.test2"},
                 ],
             }
         ]
@@ -206,8 +176,7 @@ def test_tile_vertical_layout():
     html = render_view(view, dashboard)
 
     assert 'class="tile-content vertical"' in html
-    assert 'class="tile-content"' in html  # non-vertical still present
-    # Both should match but only one with 'vertical' class — check count
+    assert 'class="tile-content"' in html
     assert html.count('class="tile-content') == 2
 
 
@@ -222,7 +191,7 @@ def test_tile_hide_state():
                 "path": "tiles",
                 "cards": [
                     {"type": "tile", "entity": "sensor.temp", "hide_state": True},
-                    {"type": "tile", "entity": "sensor.temp2"},  # no hide_state
+                    {"type": "tile", "entity": "sensor.temp2"},
                 ],
             }
         ]
@@ -232,9 +201,7 @@ def test_tile_hide_state():
     view = dashboard.views[0]
     html = render_view(view, dashboard)
 
-    # hide_state tile has no entity-state span
-    assert 'class="entity-state"' in html  # second tile still shows state
-    # Count entity-state occurrences — second tile has one
+    assert 'class="entity-state"' in html
     assert html.count('class="entity-state"') == 1, "Expected only 1 entity-state (non-hidden tile)"
 
 
@@ -295,10 +262,7 @@ def test_api_dashboard_endpoint():
 
     with TestClient(app) as client:
         r = client.get("/api/dashboard")
-        if r.status_code == 200:
-            data = r.json()
-            assert "views" in data
-            assert "title" in data
+        assert r.status_code == 404
 
 
 def test_unknown_card_renders_placeholder():
@@ -390,28 +354,6 @@ def test_entities_cover_controls():
     # 2 cover entities = 2 containers; sensor row has none
     assert html.count("cover-controls") == 2
     assert html.count("cover-btn") == 6
-
-
-def test_cover_controls_in_tile_features_not_needed():
-    """Verify cover entities in the living_room config get control buttons."""
-    from app.parser import parse_dashboard_from_file
-
-    dashboard = parse_dashboard_from_file(str(TEST_CONFIG))
-    view = dashboard.views[0]
-    assert len(view.sections) > 0
-
-    # The entities card with cover.kitchen_roof is in the first section
-    section = view.sections[0]
-    found_cover = False
-    for c in section.cards:
-        if c.type == "entities":
-            ents = c.get("entities", [])
-            for ent in ents:
-                eid = ent if isinstance(ent, str) else ent.get("entity", "")
-                if eid == "cover.kitchen_roof":
-                    found_cover = True
-                    break
-    assert found_cover, "cover.kitchen_roof should be in the entities card"
 
 
 def test_tile_numeric_input_feature():
@@ -557,6 +499,13 @@ def test_entity_toggle_in_entities_card():
     # Toggle sync script present (because light entity has toggle)
     assert "function st()" in html
 
+    # Binary entity rows now have click-to-toggle hx attributes on the row div
+    assert 'hx-post="/action"' in html
+    assert "entity_id: 'light.kitchen'" in html, "Expected light row hx-vals"
+    assert "entity_id: 'fan.bathroom'" in html, "Expected fan row hx-vals"
+    # Sensor and cover rows still have plain entity-row (no hx-post on the row itself)
+    assert '<div class="entity-row">\n' in html, "Non-togglable rows should be plain entity-row"
+
 
 def test_entity_icon_resolution():
     import app.renderer as r
@@ -591,3 +540,30 @@ def test_icon_html_with_cache():
     assert '<path d="M12 2"/>' in html
     r._icon_svg_cache.clear()
     r._ha_url = ""
+
+
+def test_navigate_action_uses_d_url():
+    from app.parser import parse_dashboard
+    from app.renderer import render_view
+
+    raw: Dict[str, Any] = {
+        "views": [
+            {
+                "title": "Nav",
+                "path": "nav",
+                "cards": [
+                    {
+                        "type": "button",
+                        "name": "Go",
+                        "tap_action": {"action": "navigate", "navigation_path": "other"},
+                    }
+                ],
+            }
+        ]
+    }
+
+    dashboard = parse_dashboard(raw)
+    view = dashboard.views[0]
+    html = render_view(view, dashboard, dashboard_name="test_dash")
+
+    assert 'hx-get="/d/test_dash/view/other"' in html

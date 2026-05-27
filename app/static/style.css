@@ -689,3 +689,20 @@ html, body {
   fill: currentColor;
   flex-shrink: 0;
 }
+
+/* ----- State dimming ----- */
+.tile-card.entity-off .tile-icon {
+  opacity: 0.35;
+}
+.tile-card.entity-off .tile-name {
+  opacity: 0.55;
+}
+.entities-card .entity-row.entity-off .entity-icon {
+  opacity: 0.35;
+}
+.entities-card .entity-row.entity-off .entity-name {
+  opacity: 0.55;
+}
+.entities-card .entity-row.entity-off .entity-state {
+  opacity: 0.5;
+}

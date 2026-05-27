@@ -41,7 +41,7 @@ def test_browser_tile_click_sends_correct_body():
             page = browser.new_page()
             page.on("request", lambda req: post_bodies.append(req) if req.url.endswith("/action") and req.method == "POST" else None)
 
-            page.goto("http://127.0.0.1:9876/view/home", wait_until="load")
+            page.goto("http://127.0.0.1:9876/d/0/view/home", wait_until="load")
 
             tile_content = page.locator(".tile-content").first
             hx_vals = tile_content.get_attribute("hx-vals")
