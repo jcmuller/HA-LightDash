@@ -412,10 +412,28 @@ async def config_page():
   }}
   #editor-container {{
     flex: 1;
-    overflow: auto;
+    overflow: hidden;
+    position: relative;
   }}
-  .CodeMirror {{
-    height: 100% !important;
+  #editor-container .CodeMirror {{
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    height: 100%;
+  }}
+  #editor-container .CodeMirror-scroll {{
+    overflow-y: auto;
+    overflow-x: auto;
+  }}
+  #fallback-editor {{
+    width: 100%;
+    height: 100%;
+    background: #1e1e1e;
+    color: #ddd;
+    border: none;
+    font-family: monospace;
+    padding: 8px;
+    resize: none;
+    display: none;
   }}
   #status-bar {{
     display: flex;
@@ -458,6 +476,14 @@ async def config_page():
   #preview-btn:hover {{
     background: #3a3a3a;
   }}
+  #rename-btn {{
+    background: #2a2a2a;
+    color: #ccc;
+    margin-top: 4px;
+  }}
+  #rename-btn:hover {{
+    background: #3a3a3a;
+  }}
   #preview-pane {{
     border-left: 1px solid #2a2a2a;
     background: #111;
@@ -476,9 +502,10 @@ async def config_page():
     <ul id="dashboard-list"></ul>
     <button class="btn btn-add" id="add-btn">+ Add Dashboard</button>
     <button class="btn btn-del" id="del-btn" style="display:none">Delete</button>
+    <button class="btn btn-add" id="rename-btn" style="display:none">Rename</button>
   </aside>
   <main id="editor-pane">
-    <div id="editor-container"><textarea id="fallback-editor" style="width:100%;height:100%;background:#1e1e1e;color:#ddd;border:none;font-family:monospace;padding:8px;resize:none"></textarea></div>
+    <div id="editor-container"><textarea id="yaml-editor"></textarea></div>
     <div id="status-bar">
       <span id="status-msg">Select a dashboard to edit</span>
       <button id="preview-btn">Preview</button>
@@ -502,11 +529,12 @@ const PREVIEW_URL = BASE + "/_config/preview";
 (function() {{
   let currentName = null;
   let cm = null;
-  const ta = document.getElementById("fallback-editor");
+  const ta = document.getElementById("yaml-editor");
   const listEl = document.getElementById("dashboard-list");
   const statusMsg = document.getElementById("status-msg");
   const previewFrame = document.getElementById("preview-frame");
   const delBtn = document.getElementById("del-btn");
+  const renameBtn = document.getElementById("rename-btn");
 
   function setStatus(msg, type) {{
     statusMsg.textContent = msg;
@@ -528,6 +556,7 @@ const PREVIEW_URL = BASE + "/_config/preview";
       }}
       if (list.length === 0) {{
         delBtn.style.display = "none";
+        renameBtn.style.display = "none";
       }}
     }} catch(e) {{
       setStatus("Failed to load dashboard list", "error");
@@ -538,6 +567,7 @@ const PREVIEW_URL = BASE + "/_config/preview";
     currentName = name;
     document.querySelectorAll("#dashboard-list li").forEach(li => li.classList.toggle("active", li.dataset.name === name));
     delBtn.style.display = "";
+    renameBtn.style.display = "";
     try {{
       const res = await fetch(LIST_URL + "/" + encodeURIComponent(name) + ".yaml");
       const text = await res.text();
@@ -569,6 +599,7 @@ const PREVIEW_URL = BASE + "/_config/preview";
       if (res.ok) {{
         setStatus("Saved", "ok");
         refreshPreview();
+        loadList();
       }} else {{
         const err = await res.json();
         setStatus(err.error || "Save failed", "error");
@@ -635,6 +666,7 @@ const PREVIEW_URL = BASE + "/_config/preview";
         if (cm) cm.setValue(""); else ta.value = "";
         previewFrame.srcdoc = "<html><body style='background:#111;color:#555;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;font-size:1.2rem'>Preview</body></html>";
         delBtn.style.display = "none";
+        renameBtn.style.display = "none";
         setStatus("Deleted", "ok");
         await loadList();
       }} else {{
@@ -646,9 +678,35 @@ const PREVIEW_URL = BASE + "/_config/preview";
     }}
   }}
 
+  async function renameDashboard() {{
+    if (!currentName) return;
+    const newName = prompt('New name for "' + currentName + '" (URL-safe):', currentName);
+    if (!newName || newName === currentName) return;
+    if (!newName.match(/^[a-zA-Z0-9_-]+$/)) {{
+      setStatus("Invalid name. Use letters, numbers, hyphens, underscores.", "error");
+      return;
+    }}
+    try {{
+      const res = await fetch(LIST_URL + "/" + encodeURIComponent(currentName) + "/rename", {{
+        method: "PUT",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{new_name: newName}})
+      }});
+      if (res.ok) {{
+        currentName = newName;
+        await loadList();
+        setStatus("Renamed to: " + newName, "ok");
+      }} else {{
+        const err = await res.json();
+        setStatus(err.error || "Rename failed", "error");
+      }}
+    }} catch(e) {{
+      setStatus("Rename error: " + e.message, "error");
+    }}
+  }}
+
   try {{
-    cm = CodeMirror(document.getElementById("editor-container"), {{
-      value: "",
+    cm = CodeMirror.fromTextArea(ta, {{
       mode: "yaml",
       theme: "default",
       lineNumbers: true,
@@ -658,7 +716,6 @@ const PREVIEW_URL = BASE + "/_config/preview";
       autoCloseBrackets: true,
       extraKeys: {{"Ctrl-S": () => saveDashboard()}}
     }});
-    document.getElementById("editor-container").querySelector(".CodeMirror").style.height = "100%";
   }} catch(e) {{
     cm = null;
     ta.style.display = "";
@@ -666,6 +723,7 @@ const PREVIEW_URL = BASE + "/_config/preview";
 
   document.getElementById("add-btn").addEventListener("click", addDashboard);
   document.getElementById("del-btn").addEventListener("click", deleteDashboard);
+  document.getElementById("rename-btn").addEventListener("click", renameDashboard);
   document.getElementById("save-btn").addEventListener("click", saveDashboard);
   document.getElementById("preview-btn").addEventListener("click", refreshPreview);
 
@@ -779,6 +837,35 @@ async def config_delete(name: str):
     dashboards.pop(name, None)
 
     return {"ok": True}
+
+
+@app.put("/_config/dashboards/{name}/rename")
+async def config_rename(name: str, req: Request):
+    data = await req.json()
+    new_name = data.get("new_name", "").strip()
+    if not new_name or not new_name.replace("-", "").replace("_", "").isalnum():
+        return JSONResponse({"error": "Invalid name"}, status_code=400)
+
+    config = getattr(app.state, "config", None)
+    is_addon = config.is_addon if config else False
+    config_dir = config.config_dir if config else "config"
+
+    data_dir = AppConfig._get_data_dir(is_addon, config_dir)
+    old_path = data_dir / f"{name}.yaml"
+    new_path = data_dir / f"{new_name}.yaml"
+
+    if not old_path.exists():
+        return JSONResponse({"error": f"Dashboard '{name}' not found"}, status_code=404)
+    if new_path.exists():
+        return JSONResponse({"error": f"Dashboard '{new_name}' already exists"}, status_code=409)
+
+    old_path.rename(new_path)
+
+    dashboards = getattr(app.state, "dashboards", {})
+    if name in dashboards:
+        dashboards[new_name] = dashboards.pop(name)
+
+    return {"ok": True, "name": new_name}
 
 
 @app.post("/_config/preview", response_class=HTMLResponse)
