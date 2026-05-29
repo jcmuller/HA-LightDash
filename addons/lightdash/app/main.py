@@ -113,6 +113,10 @@ async def lifespan(app: FastAPI):
     import app.renderer as r
     r._base_path = config.base_path
 
+    watch_task = asyncio.create_task(
+        _watch_dashboard_files(Path(config.config_dir), dashboards, sse)
+    )
+
     _rebuild_entity_filter(dashboards, sse)
 
     yield

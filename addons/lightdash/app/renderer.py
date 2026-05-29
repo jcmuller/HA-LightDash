@@ -131,9 +131,18 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
             'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
             'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
             '});}\n'
-            'document.addEventListener("htmx:afterSwap",st);\n'
-            'document.addEventListener("htmx:sseMessage",st);\n'
-            '</script>\n'
+             'document.addEventListener("htmx:afterSwap",st);\n'
+             'document.addEventListener("htmx:sseMessage",st);\n'
+             'document.addEventListener("change",function(e){'
+             'var i=e.target;'
+             'if(!i.classList.contains("toggle-input"))return;'
+             'var on=i.checked;'
+             'var c=i.closest(".tile-card,.entity-row");'
+             'if(c){c.classList.toggle("entity-on",on);c.classList.toggle("entity-off",!on);}'
+             'var s=c&&c.querySelector(".entity-state");'
+             'if(s){var t=s.textContent.trim().toLowerCase();if(t==="on"||t==="off")s.textContent=on?"on":"off";}'
+             '});\n'
+             '</script>\n'
         )
     if _view_needs_slider_sync(view):
         state_api_url = _url("/api/state/")
@@ -164,9 +173,10 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
             'hour12:e.getAttribute("data-fmt")!=="24"};'
             'if(e.getAttribute("data-sec"))o.second="2-digit";'
             'e.textContent=(new Intl.DateTimeFormat("en-GB",o)).format(new Date())})}\n'
-            'setInterval(uc,30000);\n'
-            'document.addEventListener("DOMContentLoaded",uc);\n'
-            '</script>\n'
+             'setInterval(uc,30000);\n'
+             'document.addEventListener("DOMContentLoaded",uc);\n'
+             'document.addEventListener("htmx:afterSwap",uc);\n'
+             '</script>\n'
         )
 
     return (
