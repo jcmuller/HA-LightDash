@@ -223,7 +223,7 @@ def _render_section(section: Section, indent: int = 2) -> str:
 
 
 def _section_col_count(section: Section) -> int:
-    max_col = 0
+    max_col = section.columns if section.columns > 0 else 0
     for c in section.cards:
         go = c.get("grid_options")
         if isinstance(go, dict):
