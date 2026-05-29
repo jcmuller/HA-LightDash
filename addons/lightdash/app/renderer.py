@@ -14,6 +14,7 @@ from app.models import Action, Card, Dashboard, Section, View
 logger = logging.getLogger(__name__)
 
 _SP = "  "
+_DEFAULT_SECTION_COLUMNS = 1
 
 RENDERERS: Dict[str, Any] = {}
 
@@ -223,14 +224,14 @@ def _render_section(section: Section, indent: int = 2) -> str:
 
 
 def _section_col_count(section: Section) -> int:
-    max_col = 0
+    max_col = section.columns if section.columns > 0 else 0
     for c in section.cards:
         go = c.get("grid_options")
         if isinstance(go, dict):
             span = go.get("columns", 0)
             if isinstance(span, int) and span > max_col:
                 max_col = span
-    return max(max_col, 3)
+    return max(max_col, _DEFAULT_SECTION_COLUMNS)
 
 
 def render_view_index(views: List[View], dashboard_name: str = "") -> str:

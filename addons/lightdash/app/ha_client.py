@@ -9,6 +9,12 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _ssl_verify() -> bool:
+    import os
+
+    return os.getenv("HA_SSL_VERIFY", "true").lower() not in ("false", "0", "no")
+
+
 class HAClient:
     def __init__(self, ha_url: str, ha_token: str):
         self.ha_url = ha_url.rstrip("/")
@@ -20,6 +26,7 @@ class HAClient:
                 "Content-Type": "application/json",
             },
             timeout=10.0,
+            verify=_ssl_verify(),
         )
         self._connected = False
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List
+from typing import Any, List, Set
 
 from app.models import Card, Dashboard, View
 
@@ -64,3 +64,36 @@ def has_jinja_markdown(view: View) -> bool:
             if JINJA_RE.search(content):
                 return True
     return False
+
+
+def collect_entities(dashboard: Dashboard) -> Set[str]:
+    """Return all entity IDs referenced anywhere in a dashboard's card configs."""
+    entities: Set[str] = set()
+
+    def _scan(cfg: Any) -> None:
+        if not isinstance(cfg, dict):
+            return
+        entity = cfg.get("entity")
+        if isinstance(entity, str) and entity:
+            entities.add(entity)
+        for item in cfg.get("entities") or []:
+            if isinstance(item, str) and item:
+                entities.add(item)
+            elif isinstance(item, dict):
+                _scan(item)
+        for v in cfg.values():
+            if isinstance(v, dict):
+                _scan(v)
+            elif isinstance(v, list):
+                for item in v:
+                    if isinstance(item, dict):
+                        _scan(item)
+
+    for view in dashboard.views:
+        all_cards = list(view.cards)
+        for section in view.sections:
+            all_cards.extend(section.cards)
+        for card in all_cards:
+            _scan(card.config)
+
+    return entities

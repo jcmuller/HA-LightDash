@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app.compat import scan_dashboard
+from app.compat import collect_entities, scan_dashboard
 from app.config import AppConfig
 from app.ha_client import HAClient
 from app.parser import parse_dashboard
@@ -112,6 +112,8 @@ async def lifespan(app: FastAPI):
 
     import app.renderer as r
     r._base_path = config.base_path
+
+    _rebuild_entity_filter(dashboards, sse)
 
     yield
 
@@ -921,6 +923,9 @@ async def config_create(req: Request):
     dashboards = getattr(app.state, "dashboards", {})
     parsed = parse_dashboard(yaml.safe_load(yaml_text))
     dashboards[name] = parsed
+    sse = getattr(app.state, "sse", None)
+    if sse:
+        _rebuild_entity_filter(dashboards, sse)
 
     bp = _bp()
     return {
@@ -958,6 +963,9 @@ async def config_save(name: str, req: Request):
     parsed = parse_dashboard(raw)
     dashboards[name] = parsed
     scan_dashboard(parsed)
+    sse = getattr(app.state, "sse", None)
+    if sse:
+        _rebuild_entity_filter(dashboards, sse)
 
     return {"ok": True, "title": parsed.title}
 
