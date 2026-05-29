@@ -151,7 +151,7 @@ def test_tile_toggle_switch_for_binary_entity():
     assert 'class="tile-content vertical"' in html, "Expected vertical class"
     assert html.count('class="entity-state"') == 2, "Expected 2 entity-state spans (light + sensor)"
 
-    assert "/static/toggle_sync.js" in html, "Expected toggle sync script"
+    assert "function st()" in html, "Expected toggle sync script"
 
 
 def test_tile_vertical_layout():
@@ -452,8 +452,10 @@ def test_clock_card_renderer():
     assert 'data-tz="US/Eastern"' in html
     assert 'data-fmt="12"' in html
 
-    # Clock ticker script reference injected
-    assert "/static/clock.js" in html
+    # Clock ticker script injected
+    assert "function uc()" in html
+    assert "setInterval(uc,30000)" in html
+    assert 'Intl.DateTimeFormat("en-GB"' in html or "Intl.DateTimeFormat" in html
 
 
 def test_entity_toggle_in_entities_card():
@@ -495,7 +497,7 @@ def test_entity_toggle_in_entities_card():
     assert len(rows) == 5  # header + 4 rows
 
     # Toggle sync script present (because light entity has toggle)
-    assert "/static/toggle_sync.js" in html
+    assert "function st()" in html
 
     # Binary entity rows now have click-to-toggle hx attributes on the row div
     assert 'hx-post="/action"' in html
@@ -666,8 +668,8 @@ def test_tile_light_brightness_inline():
     # Slider rendered
     assert 'class="feature-slider"' in html
 
-    # ss() script reference injected (view has tile with light-brightness feature)
-    assert "/static/slider_sync.js" in html
+    # ss() script injected (view has tile with light-brightness feature)
+    assert "function ss(" in html
 
 
 def test_tile_light_brightness_initial_value():

@@ -1,5 +1,0 @@
-<div class="cover-controls">
-{% for btn in buttons %}
-<button class="cover-btn" aria-label="{{ btn.aria }}" hx-post="{{ url('/action') }}" hx-trigger="click" hx-vals="{{ btn.vals }}" hx-swap="none">{{ btn.label }}</button>
-{% endfor %}
-</div>

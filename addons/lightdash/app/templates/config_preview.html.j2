@@ -1,9 +1,0 @@
-{% extends "base.html.j2" %}
-{% block content %}
-<div style="display:flex;gap:8px;padding:6px 12px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;font-size:0.85rem">
-{% for v in views %}
-<a href="{{ v.href }}"{% if v.active %} class="active"{% endif %}>{{ v.title }}</a>
-{% endfor %}
-</div>
-{{ dashboard_html }}
-{% endblock %}

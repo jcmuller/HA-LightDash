@@ -8,11 +8,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from markupsafe import Markup
-
 from app.compat import JINJA_RE
 from app.models import Action, Card, Dashboard, Section, View
-from app.template_env import register_helpers, render_template
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +60,7 @@ _base_path: str = ""
 _via_ingress = contextvars.ContextVar("renderer_via_ingress", default=False)
 _icon_svg_cache: Dict[str, str] = {}
 
-_SW_SCRIPT = Markup(
+_SW_SCRIPT = (
     '<script>'
     'if(navigator.serviceWorker){navigator.serviceWorker.getRegistrations().then(function(r){'
     'for(var i=0;i<r.length;i++){r[i].unregister()}})}'
@@ -84,17 +81,7 @@ def register(type_name: str):
     return decorator
 
 
-# ── View rendering ───────────────────────────────────────────────────────
-
-
-def render_view(
-    view: View,
-    dashboard: Dashboard,
-    ha_url: str = "",
-    entity_icons: Optional[dict] = None,
-    entity_states: Optional[dict] = None,
-    dashboard_name: str = "",
-) -> str:
+def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons: Optional[dict] = None, entity_states: Optional[dict] = None, dashboard_name: str = "") -> str:
     global _entity_icons, _entity_states, _ha_url, _dashboard_name
     _entity_icons = entity_icons or {}
     _entity_states = entity_states or {}
@@ -117,35 +104,106 @@ def render_view(
         bg += f"height: {dashboard.lightdash.container_height};overflow-y: auto;"
 
     needs_uplot = _view_needs_charts(view)
-    needs_toggle_sync = _view_needs_toggle_sync(view)
-    needs_slider_sync = _view_needs_slider_sync(view)
-    needs_clock = _view_needs_clock(view)
 
     if view.sections:
-        cards_html = "\n".join(_render_section(s) for s in view.sections)
+        cards_html = "\n".join(_render_section(s, 2) for s in view.sections)
     else:
-        cards_html = "\n".join(_render_card(c) for c in view.cards)
+        cards_html = "\n".join(_render_card(c, 2) for c in view.cards)
 
-    ctx = {
-        "css_url": _url("/static/style.css"),
-        "sw_script": _SW_SCRIPT,
-        "title": html.escape(view.title or dashboard.title),
-        "path": html.escape(view.path),
-        "bg_style": bg,
-        "sse_url": _url("/_sse"),
-        "cards_html": Markup(cards_html),
-        "needs_uplot": needs_uplot,
-        "needs_toggle_sync": needs_toggle_sync,
-        "needs_slider_sync": needs_slider_sync,
-        "needs_clock": needs_clock,
-        "state_api_url": _url("/api/state/"),
-    }
-    return render_template("dashboard_view.html.j2", **ctx)
+    title = html.escape(view.title or dashboard.title)
+    path = html.escape(view.path)
+
+    head_extra = ""
+    if needs_uplot:
+        head_extra += (
+            '<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>\n'
+            '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">\n'
+        )
+    if _view_needs_toggle_sync(view):
+        head_extra += (
+            '<script>\n'
+            'function st(){'
+            'document.querySelectorAll(".tile-card").forEach(function(e){'
+            'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
+            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            '});'
+            'document.querySelectorAll(".entities-card .entity-row").forEach(function(e){'
+            'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
+            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            '});}\n'
+             'document.addEventListener("htmx:afterSwap",st);\n'
+             'document.addEventListener("htmx:sseMessage",st);\n'
+             'document.addEventListener("change",function(e){'
+             'var i=e.target;'
+             'if(!i.classList.contains("toggle-input"))return;'
+             'var on=i.checked;'
+             'var c=i.closest(".tile-card,.entity-row");'
+             'if(c){c.classList.toggle("entity-on",on);c.classList.toggle("entity-off",!on);}'
+             'var s=c&&c.querySelector(".entity-state");'
+             'if(s){var t=s.textContent.trim().toLowerCase();if(t==="on"||t==="off")s.textContent=on?"on":"off";}'
+             '});\n'
+             '</script>\n'
+        )
+    if _view_needs_slider_sync(view):
+        state_api_url = _url("/api/state/")
+        head_extra += (
+            '<script>\n'
+            'function ss(e){'
+            'var s=e.detail.elt;'
+            'if(!s||!s.classList.contains("entity-state"))return;'
+            'var c=s.closest(".tile-card");'
+            'if(!c)return;'
+            'var r=c.querySelector(".feature-slider");'
+            'if(!r)return;'
+            'var eid=s.getAttribute("data-entity");'
+            'if(!eid)return;'
+            "fetch('" + state_api_url + "'+eid).then(function(resp){return resp.json()}).then(function(d){"
+            'if(d&&d.attributes&&d.attributes.brightness){r.value=Math.round(d.attributes.brightness/255*100);}'
+            '});'
+            '}\n'
+            'document.addEventListener("htmx:sseMessage",ss);\n'
+            '</script>\n'
+        )
+    if _view_needs_clock(view):
+        head_extra += (
+            '<script>\n'
+            'function uc(){document.querySelectorAll(".clock-digital").forEach('
+            'function(e){var o={hour:"2-digit",minute:"2-digit",'
+            'timeZone:e.getAttribute("data-tz")||"Europe/London",'
+            'hour12:e.getAttribute("data-fmt")!=="24"};'
+            'if(e.getAttribute("data-sec"))o.second="2-digit";'
+            'e.textContent=(new Intl.DateTimeFormat("en-GB",o)).format(new Date())})}\n'
+            'setInterval(uc,30000);\n'
+            'document.addEventListener("DOMContentLoaded",uc);\n'
+            '</script>\n'
+        )
+
+    return (
+        '<!DOCTYPE html>\n'
+        '<html lang="en">\n'
+        '<head>\n'
+        '<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">\n'
+        '<title>' + title + '</title>\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        '<script src="https://unpkg.com/htmx.org@2.0.4"></script>\n'
+        '<script src="https://unpkg.com/htmx-ext-sse@2.2.4/dist/sse.js"></script>\n'
+        + _SW_SCRIPT
+        + head_extra +
+        '</head>\n'
+        '<body>\n'
+        '<div class="lv-view" id="view-' + path + '" hx-ext="sse" sse-connect="' + _url("/_sse") + '" style="' + bg + '">\n'
+        + cards_html + '\n'
+        '</div>\n'
+        '</body>\n'
+        '</html>'
+    )
 
 
-def _render_section(section: Section) -> str:
+def _render_section(section: Section, indent: int = 2) -> str:
     cols = _section_col_count(section)
-    cells = []
+    style = f"--section-cols: {cols}"
+    cards_html = ""
     for c in section.cards:
         go = c.get("grid_options")
         span_col = 0
@@ -165,11 +223,13 @@ def _render_section(section: Section) -> str:
         cell_attrs = {"class": "grid-cell"}
         if cell_style:
             cell_attrs["style"] = cell_style
-        cells.append({
-            "attrs": Markup(_build_attrs(cell_attrs)),
-            "content": Markup(_render_card(c)),
-        })
-    return render_template("section.html.j2", cols=cols, cells=cells)
+        card_content = _render_card(c, indent + 1)
+        cards_html += "\n" + _SP * (indent + 1) + f'<div{_build_attrs(cell_attrs)}>\n'
+        cards_html += card_content
+        cards_html += '\n' + _SP * (indent + 1) + '</div>'
+    if cards_html:
+        cards_html += "\n" + _SP * indent
+    return _h("div", {"class": "section-grid", "style": style}, cards_html, indent)
 
 
 def _section_col_count(section: Section) -> int:
@@ -184,44 +244,87 @@ def _section_col_count(section: Section) -> int:
 
 
 def render_view_index(views: List[View], dashboard_name: str = "") -> str:
-    links = []
+    links = ""
     for v in views:
         href = _url(f"/d/{html.escape(dashboard_name)}/view/{html.escape(v.path)}") if dashboard_name else _url("/view/" + html.escape(v.path))
-        links.append({
-            "href": href,
-            "icon": html.escape(v.icon) if v.icon else "",
-            "title": html.escape(v.title or v.path),
-        })
-    return render_template("view_index.html.j2",
-        css_url=_url("/static/style.css"),
-        sw_script=_SW_SCRIPT,
-        links=links,
+        links += '    <li><a href="' + href + '">'
+        if v.icon:
+            links += '<span class="vi">' + html.escape(v.icon) + "</span> "
+        links += html.escape(v.title or v.path) + "</a></li>\n"
+    return (
+        '<!DOCTYPE html>\n'
+        '<html lang="en">\n'
+        '<head>\n'
+        '<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
+        '<title>LightDash</title>\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        + _SW_SCRIPT +
+        '</head>\n'
+        '<body>\n'
+        '<div class="view-index">\n'
+        '<h1>LightDash</h1>\n'
+        '<ul>\n'
+        + links +
+        '</ul>\n'
+        '</div>\n'
+        '</body>\n'
+        '</html>'
     )
 
 
 def render_dashboard_index(dashboards: List[Dict[str, str]]) -> str:
-    links = []
+    links = ""
     for d in dashboards:
         name = d.get("url_path", d.get("title", "?"))
         title = d.get("title", name)
-        links.append({
-            "href": _url("/d/" + html.escape(name)),
-            "title": html.escape(title),
-            "name": html.escape(name),
-        })
-    return render_template("dashboard_index.html.j2",
-        css_url=_url("/static/style.css"),
-        sw_script=_SW_SCRIPT,
-        links=links,
+        href = _url("/d/" + html.escape(name))
+        links += '    <li><a href="' + href + '">' + html.escape(title) + " (" + html.escape(name) + ")</a></li>\n"
+    return (
+        '<!DOCTYPE html>\n'
+        '<html lang="en">\n'
+        '<head>\n'
+        '<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
+        '<title>LightDash</title>\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        + _SW_SCRIPT +
+        '</head>\n'
+        '<body>\n'
+        '<div class="view-index">\n'
+        '<h1>LightDash</h1>\n'
+        '<p>Select a dashboard:</p>\n'
+        '<ul>\n'
+        + links +
+        '</ul>\n'
+        '</div>\n'
+        '</body>\n'
+        '</html>'
     )
 
 
 def render_error(message: str) -> str:
-    return render_template("error.html.j2",
-        css_url=_url("/static/style.css"),
-        sw_script=_SW_SCRIPT,
-        message=html.escape(message),
-        home_url=_url("/"),
+    msg = html.escape(message)
+    return (
+        '<!DOCTYPE html>\n'
+        '<html lang="en">\n'
+        '<head>\n'
+        '<meta charset="UTF-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">\n'
+        '<title>LightDash - Error</title>\n'
+        '<link rel="stylesheet" href="' + _url("/static/style.css") + '">\n'
+        + _SW_SCRIPT +
+        '</head>\n'
+        '<body>\n'
+        '<div class="view-index">\n'
+        '<h1>LightDash</h1>\n'
+        '<div class="error-card" style="background:#3a1a1a;border:1px solid #c44;padding:20px;border-radius:8px;color:#f88">'
+        + msg +
+        '</div>\n'
+        '<p><a href="' + _url("/") + '" style="color:#88f">Back to dashboards</a></p>\n'
+        '</div>\n'
+        '</body>\n'
+        '</html>'
     )
 
 
@@ -274,17 +377,14 @@ def _view_needs_clock(view: View) -> bool:
     return False
 
 
-def _render_card(card: Card) -> str:
+def _render_card(card: Card, indent: int = 2) -> str:
     renderer = RENDERERS.get(card.type)
     if renderer is None:
-        return _render_placeholder(card)
-    out = renderer(card)
+        return _render_placeholder(card, indent)
+    out = renderer(card, indent)
     if out is None:
-        return _render_placeholder(card)
+        return _render_placeholder(card, indent)
     return out
-
-
-# ── HTML generation helpers ──────────────────────────────────────────────
 
 
 def _h(tag: str, attrs: Dict[str, str], content: str = "", indent: int = 0) -> str:
@@ -494,56 +594,59 @@ def _color_icon(color: str) -> str:
     return color_map.get(color.lower(), color)
 
 
-# ── Card renderers ───────────────────────────────────────────────────────
+# ---- Card Renderers -------------------------------------------------------
 
 
 @register("placeholder")
-def _render_placeholder(card: Card) -> str:
-    return render_template("cards/placeholder.html.j2")
+def _render_placeholder(card: Card, indent: int = 2) -> str:
+    return _h("div", {"class": "ha-card placeholder-card"}, "?", indent)
 
 
 @register("heading")
-def _render_heading(card: Card) -> str:
+def _render_heading(card: Card, indent: int = 2) -> str:
     text = html.escape(card.get("heading", ""))
     icon = _icon_html(card.get("icon", ""), 20)
-    if icon:
-        content = Markup(icon) + '<h2 class="heading-text">' + text + "</h2>"
-    else:
-        content = '<h2 class="heading-text">' + text + "</h2>"
-    return render_template("cards/heading.html.j2",
-        icon=Markup(icon),
-        text=text,
-    )
+    content = icon + '<h2 class="heading-text">' + text + "</h2>" if icon else '<h2 class="heading-text">' + text + "</h2>"
+    return _h("div", {"class": "heading-card"}, content, indent)
 
 
 @register("markdown")
-def _render_markdown(card: Card) -> str:
+def _render_markdown(card: Card, indent: int = 2) -> str:
     content = card.get("content", "")
     if JINJA_RE.search(content):
-        return _render_placeholder(card)
+        return _render_placeholder(card, indent)
     rendered = _render_markdown_text(content)
-    return render_template("cards/markdown.html.j2",
-        content=Markup(rendered),
-    )
+    return _h("div", {"class": "ha-card markdown-card"}, rendered, indent)
 
 
 @register("entity")
-def _render_entity(card: Card) -> str:
+def _render_entity(card: Card, indent: int = 2) -> str:
     eid = card.get("entity", "")
-    ctx = {
-        "name": html.escape(card.get("name", _friendly_name(eid))),
-        "icon": Markup(_icon_html(_entity_icon(eid, card.get("icon", "")), 20)),
-        "state_span": Markup(_entity_span(eid)),
-        "ta_attrs": Markup(_build_attrs(_tap_action_attrs(card))),
-    }
-    return render_template("cards/entity.html.j2", **ctx)
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 20)
+    state_span = _entity_span(eid, indent=indent + 2)
+    icon_cell = '<div class="entity-icon">' + icon + "</div>" if icon else ""
+    attrs = {"class": "ha-card entity-card"}
+    ta = _tap_action_attrs(card)
+    attrs.update(ta)
+    content = (
+        '\n' + _SP * (indent + 1) + '<div class="entity-row">\n'
+        + _SP * (indent + 2) + icon_cell + '\n'
+        + _SP * (indent + 2) + '<div class="entity-info">\n'
+        + _SP * (indent + 3) + '<div class="entity-name">' + name + '</div>\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
+    )
+    return _h("div", attrs, content, indent)
 
 
 @register("entities")
-def _render_entities(card: Card) -> str:
+def _render_entities(card: Card, indent: int = 2) -> str:
     title = html.escape(card.get("title", ""))
     raw_entities = card.get("entities", [])
-    rows = []
+    rows = ""
     for i, ent in enumerate(raw_entities):
         if isinstance(ent, str):
             eid = ent
@@ -555,17 +658,18 @@ def _render_entities(card: Card) -> str:
             eicon = ent.get("icon", "")
         else:
             continue
+        icon = _icon_html(_entity_icon(eid, eicon), 18)
+        state_span = _entity_span(eid, indent=indent + 3)
         type_attr = ent.get("type", "") if isinstance(ent, dict) else ""
+        divider = ""
         if type_attr == "divider":
-            rows.append({"type": "divider"})
+            rows += _SP * (indent + 1) + '<hr class="entities-divider">\n'
             continue
         if type_attr == "section":
             section = html.escape(ent.get("name", "") if isinstance(ent, dict) else "")
-            rows.append({"type": "section", "name": section})
+            rows += _SP * (indent + 1) + '<div class="entities-section-header">' + section + '</div>\n'
             continue
-        icon = Markup(_icon_html(_entity_icon(eid, eicon), 18))
-        state_span = Markup(_entity_span(eid))
-        controls = Markup(_render_cover_controls(eid) or _render_entity_toggle(eid) or "")
+        row_controls = _render_cover_controls(eid, indent + 2) or _render_entity_toggle(eid, indent + 2)
         row_attrs: Dict[str, str] = {"class": "entity-row"}
         if _is_binary_domain(eid) and eid.split(".")[0] != "cover":
             dom = eid.split(".")[0]
@@ -576,26 +680,31 @@ def _render_entities(card: Card) -> str:
                 "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
                 "hx-swap": "none",
             })
-        rows.append({
-            "type": "entity",
-            "icon": icon,
-            "name": html.escape(ename),
-            "state_span": state_span,
-            "controls": controls,
-            "attrs": Markup(_build_attrs(row_attrs)),
-        })
-    return render_template("cards/entities.html.j2",
-        title=title,
-        rows=rows,
-    )
+        rows += (
+            _SP * (indent + 1) + '<div' + _build_attrs(row_attrs) + '>\n'
+            + _SP * (indent + 2) + '<div class="entity-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="entity-info">\n'
+            + _SP * (indent + 3) + '<div class="entity-name">' + html.escape(ename) + '</div>\n'
+            + _SP * (indent + 3) + state_span + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + row_controls
+            + _SP * (indent + 1) + '</div>\n'
+        )
+
+    header = ""
+    if title:
+        header = _SP * (indent + 1) + '<div class="entities-header">' + title + '</div>\n'
+
+    content = "\n" + header + rows + _SP * indent
+    return _h("div", {"class": "ha-card entities-card"}, content, indent)
 
 
 @register("glance")
-def _render_glance(card: Card) -> str:
+def _render_glance(card: Card, indent: int = 2) -> str:
     title = html.escape(card.get("title", ""))
     columns = card.get("columns", 3)
     raw_entities = card.get("entities", [])
-    items = []
+    items = ""
     for ent in raw_entities:
         if isinstance(ent, str):
             eid = ent
@@ -607,52 +716,66 @@ def _render_glance(card: Card) -> str:
             eicon = ent.get("icon", "")
         else:
             continue
-        icon = Markup(_icon_html(_entity_icon(eid, eicon), 20))
-        state_span = Markup(_entity_span(eid))
+        icon = _icon_html(_entity_icon(eid, eicon), 20)
+        state_span = _entity_span(eid, indent=indent + 3)
         ta_attrs = ""
         if isinstance(ent, dict) and ent.get("tap_action"):
             e_card = Card(type="glance_item", config=ent)
             ta = _tap_action_attrs(e_card)
-            ta_attrs = Markup(_build_attrs(ta))
-        items.append({
-            "icon": icon,
-            "name": html.escape(ename),
-            "state_span": state_span,
-            "attrs": ta_attrs,
-        })
-    return render_template("cards/glance.html.j2",
-        title=title,
-        columns=columns,
-        items=items,
-    )
+            ta_attrs = _build_attrs(ta)
+        items += (
+            _SP * (indent + 1) + '<div class="glance-item"' + ta_attrs + '>\n'
+            + _SP * (indent + 2) + '<div class="glance-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="glance-name">' + html.escape(ename) + '</div>\n'
+            + _SP * (indent + 2) + state_span + '\n'
+            + _SP * (indent + 1) + '</div>\n'
+        )
+
+    header = ""
+    if title:
+        header = _SP * (indent + 1) + '<div class="glance-header">' + title + '</div>\n'
+
+    content = "\n" + header + items + _SP * indent
+    return _h("div", {"class": "ha-card glance-card", "style": "--cols: " + str(columns)}, content, indent)
 
 
 @register("button")
-def _render_button(card: Card) -> str:
+def _render_button(card: Card, indent: int = 2) -> str:
     name = html.escape(card.get("name", card.get("entity", "Action")))
     eid = card.get("entity", "")
-    icon = Markup(_icon_html(_entity_icon(eid, card.get("icon", "")), 28))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 28)
     ta_attrs = _tap_action_attrs(card)
+
     if not ta_attrs and card.get("entity"):
         ta_attrs = _action_attrs(card.get("entity", ""), "toggle")
-    return render_template("cards/button.html.j2",
-        name=name,
-        icon=icon,
-        btn_attrs=Markup(_build_attrs(ta_attrs)),
+
+    content = (
+        '\n' + _SP * (indent + 1) + '<button class="button-content"' + _build_attrs(ta_attrs) + '>\n'
+        + _SP * (indent + 2) + '<div class="button-icon">' + icon + '</div>\n'
+        + _SP * (indent + 2) + '<div class="button-name">' + name + '</div>\n'
+        + _SP * (indent + 1) + '</button>\n'
+        + _SP * indent
     )
+    return _h("div", {"class": "ha-card button-card"}, content, indent)
 
 
 @register("tile")
-def _render_tile(card: Card) -> str:
+def _render_tile(card: Card, indent: int = 2) -> str:
     eid = card.get("entity", "")
-    has_features = bool(card.get("features"))
-    features_inline = card.get("features_position", "") == "inline"
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 24)
+    color = _color_icon(card.get("color", ""))
+    vertical = card.get("vertical", False)
     hide_state = card.get("hide_state", False)
+    features_inline = card.get("features_position", "") == "inline"
+
+    attrs: Dict[str, str] = {"class": "ha-card tile-card"}
+    if color:
+        attrs["style"] = "--tile-color: " + color
+
     is_binary = _is_binary_domain(eid)
     is_cover = eid.split(".")[0] == "cover" if "." in eid else False
-
     state_html = ""
-    toggle_attrs = {}
     if is_binary and not hide_state and not is_cover:
         dom = eid.split(".")[0] if "." in eid else ""
         svc = _domain_toggle_service(dom)
@@ -662,87 +785,126 @@ def _render_tile(card: Card) -> str:
             "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
             "hx-swap": "none",
         }
-        state_html = Markup(
+        state_html = (
             '<label class="toggle-switch" onclick="event.stopPropagation()">'
             '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>'
             '<span class="toggle-slider"></span>'
             '</label>'
-            + _entity_span(eid)
+            + _entity_span(eid, indent=indent + 2)
         )
+    elif is_cover and not hide_state:
+        state_html = _entity_span(eid, indent=indent + 2)
     elif not hide_state:
-        state_html = Markup(_entity_span(eid))
-
-    features_html = ""
-    inline_features_html = ""
-    if has_features:
-        features_data = _build_features_data(card)
-        features_html = Markup(render_template("partials/features.html.j2", features=features_data, inline=False))
-        if features_inline:
-            inline_features_html = Markup(render_template("partials/features.html.j2", features=features_data, inline=True))
-
-    cover_html = ""
-    if is_cover and not hide_state:
-        cover_html = Markup(_render_cover_controls(eid))
+        state_html = _entity_span(eid, indent=indent + 2)
 
     ta_attrs = _tap_action_attrs(card)
+
     if not ta_attrs and eid and not is_cover:
         ta_attrs = _action_attrs(eid, "toggle")
 
-    ctx = {
-        "name": html.escape(card.get("name", _friendly_name(eid))),
-        "icon": Markup(_icon_html(_entity_icon(eid, card.get("icon", "")), 24)),
-        "color": _color_icon(card.get("color", "")),
-        "vertical": card.get("vertical", False),
-        "hide_state": hide_state,
-        "features_inline": features_inline,
-        "is_binary": is_binary,
-        "is_cover": is_cover,
-        "ta_attrs": Markup(_build_attrs(ta_attrs)),
-        "tc_class": "tile-content" + (" vertical" if card.get("vertical") else ""),
-        "has_features": has_features,
-        "state_html": state_html,
-        "features_html": features_html,
-        "inline_features": inline_features_html,
-        "cover_html": cover_html,
-    }
-    return render_template("cards/tile.html.j2", **ctx)
+    tc_class = "tile-content" + (" vertical" if vertical else "")
+
+    has_features = bool(card.get("features"))
+    features_html = ""
+    if has_features:
+        features_html = "\n" + _render_features(card, indent + 1) + "\n" + _SP * indent
+
+    if features_inline and has_features:
+        inline_html = _render_features(card, indent + 3, inline=True)
+        content = (
+            '\n'
+            + _SP * (indent + 1) + '<div class="' + tc_class + '"' + _build_attrs(ta_attrs) + '>\n'
+            + _SP * (indent + 2) + '<div class="tile-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="tile-info tile-info-inline">\n'
+            + _SP * (indent + 3) + '<div class="tile-name">' + name + '</div>\n'
+            + inline_html + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + _SP * (indent + 1) + '</div>\n'
+            + _SP * indent
+        )
+    elif is_cover and not hide_state:
+        cover_html = _render_cover_controls(eid, indent + 3)
+        content = (
+            '\n'
+            + _SP * (indent + 1) + '<div class="' + tc_class + '"' + _build_attrs(ta_attrs) + '>\n'
+            + _SP * (indent + 2) + '<div class="tile-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="tile-info tile-info-inline">\n'
+            + _SP * (indent + 3) + '<div class="tile-name">' + name + '</div>\n'
+            + _SP * (indent + 3) + state_html + '\n'
+            + cover_html + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + _SP * (indent + 1) + '</div>\n'
+            + _SP * indent
+        )
+    else:
+        content = (
+            '\n'
+            + _SP * (indent + 1) + '<div class="' + tc_class + '"' + _build_attrs(ta_attrs) + '>\n'
+            + _SP * (indent + 2) + '<div class="tile-icon">' + icon + '</div>\n'
+            + _SP * (indent + 2) + '<div class="tile-info">\n'
+            + _SP * (indent + 3) + '<div class="tile-name">' + name + '</div>\n'
+            + _SP * (indent + 3) + state_html + '\n'
+            + _SP * (indent + 2) + '</div>\n'
+            + _SP * (indent + 1) + '</div>\n'
+            + features_html
+            + _SP * indent
+        )
+    return _h("div", attrs, content, indent)
 
 
-def _build_features_data(card: Card) -> list:
+def _render_features(card: Card, indent: int, inline: bool = False) -> str:
     features = card.get("features", [])
     if not features or not isinstance(features, list):
-        return []
-    result = []
-    eid = card.get("entity", "")
-    state = _entity_states.get(eid, {})
+        return ""
+    if inline:
+        html_out = ""
+    else:
+        html_out = _SP * indent + '<div class="tile-features">\n'
     for f in features:
-        ftype = f.get("type", "") if isinstance(f, dict) else ""
+        ftype = f.get("type", "")
         if ftype == "light-brightness":
+            eid = card.get("entity", "")
+            state = _entity_states.get(eid, {})
             brightness = state.get("attributes", {}).get("brightness", 0) if state.get("state") == "on" else 0
             pct = round(brightness / 255 * 100) if brightness else 0
-            result.append({
-                "type": "light-brightness",
-                "pct": pct,
-                "slider_attrs": Markup(_build_attrs({
-                    "hx-post": _url("/action"),
-                    "hx-trigger": "change",
-                    "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
-                    "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
-                    "hx-swap": "none",
-                })),
-            })
+            slider_attrs = {
+                "type": "range",
+                "class": "feature-slider",
+                "min": "0",
+                "max": "100",
+                "value": str(pct),
+                "hx-post": _url("/action"),
+                "hx-trigger": "change",
+                "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
+                "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
+                "hx-swap": "none",
+            }
+            label = ""
+            if not inline:
+                label = _SP * (indent + 2) + '<span class="feature-label">Brightness</span>\n'
+            html_out += (
+                _SP * (indent + 1) + '<div class="feature-row">\n'
+                + label
+                + _SP * (indent + 2) + '<input ' + _build_attrs(slider_attrs) + '>\n'
+                + _SP * (indent + 1) + '</div>\n'
+            )
         elif ftype == "light-color-temp":
-            result.append({
-                "type": "light-color-temp",
-                "slider_attrs": Markup(_build_attrs({
+            eid = card.get("entity", "")
+            html_out += (
+                _SP * (indent + 1) + '<div class="feature-row">\n'
+                + _SP * (indent + 2) + '<span class="feature-label">Color Temp</span>\n'
+                + _SP * (indent + 2) + '<input type="range" class="feature-slider" min="153" max="500" '
+                + _build_attrs({
                     "hx-post": _url("/action"),
                     "hx-trigger": "change",
                     "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
                     "hx-vals-js": '{"data": {"color_temp": parseInt(event.target.value)}}',
                     "hx-swap": "none",
-                })),
-            })
+                }) + '>\n'
+                + _SP * (indent + 1) + '</div>\n'
+            )
         elif ftype == "numeric-input":
+            eid = card.get("entity", "")
             dec_attrs = {
                 "hx-post": _url("/action"),
                 "hx-trigger": "click",
@@ -755,33 +917,43 @@ def _build_features_data(card: Card) -> list:
                 "hx-vals": _js_obj(entity_id=eid, action="call-service", service="input_number.increment"),
                 "hx-swap": "none",
             }
-            result.append({
-                "type": "numeric-input",
-                "eid": eid,
-                "state_span": Markup(_entity_span(eid)),
-                "dec_attrs": Markup(_build_attrs(dec_attrs)),
-                "inc_attrs": Markup(_build_attrs(inc_attrs)),
-            })
-    return result
+            html_out += (
+                _SP * (indent + 1) + '<div class="feature-row">\n'
+                + _SP * (indent + 2) + '<div class="numeric-input">\n'
+                + _SP * (indent + 3) + _h("button", {"class": "num-btn", "aria-label": "Decrement", **dec_attrs}, "−") + '\n'
+                + _SP * (indent + 3) + _entity_span(eid, indent=indent + 3) + '\n'
+                + _SP * (indent + 3) + _h("button", {"class": "num-btn", "aria-label": "Increment", **inc_attrs}, "+") + '\n'
+                + _SP * (indent + 2) + '</div>\n'
+                + _SP * (indent + 1) + '</div>\n'
+            )
+    if not inline:
+        html_out += _SP * indent + "</div>\n"
+    return html_out
 
 
-def _render_cover_controls(entity_id: str) -> str:
+def _render_cover_controls(entity_id: str, indent: int) -> str:
     if not entity_id or "." not in entity_id:
         return ""
     dom = entity_id.split(".")[0]
     if dom != "cover":
         return ""
-    buttons = []
+    eid = html.escape(entity_id)
+    html_out = _SP * indent + '<div class="cover-controls">\n'
     for label, svc, aria in [("▲", "cover.open_cover", "Open"), ("⏹", "cover.stop_cover", "Stop"), ("▼", "cover.close_cover", "Close")]:
-        buttons.append({
-            "label": label,
-            "aria": aria,
-            "vals": Markup(_js_obj(entity_id=entity_id, action="call-service", service=svc)),
-        })
-    return render_template("partials/cover_controls.html.j2", buttons=buttons)
+        attrs = {
+            "hx-post": _url("/action"),
+            "hx-trigger": "click",
+            "hx-vals": _js_obj(entity_id=entity_id, action="call-service", service=svc),
+            "hx-swap": "none",
+            "class": "cover-btn",
+            "aria-label": aria,
+        }
+        html_out += _SP * (indent + 1) + _h("button", attrs, label, 0) + "\n"
+    html_out += _SP * indent + "</div>\n"
+    return html_out
 
 
-def _render_entity_toggle(entity_id: str) -> str:
+def _render_entity_toggle(entity_id: str, indent: int) -> str:
     if not entity_id or "." not in entity_id:
         return ""
     if not _is_binary_domain(entity_id):
@@ -796,166 +968,233 @@ def _render_entity_toggle(entity_id: str) -> str:
         "hx-vals": _js_obj(entity_id=entity_id, action="toggle", service=svc),
         "hx-swap": "none",
     }
-    return render_template("partials/entity_toggle.html.j2",
-        entity_id=entity_id,
-        toggle_attrs=Markup(_build_attrs(toggle_attrs)),
-    )
+    html_out = _SP * indent + '<div class="entity-toggle" onclick="event.stopPropagation()">\n'
+    html_out += _SP * (indent + 1) + '<label class="toggle-switch">\n'
+    html_out += _SP * (indent + 2) + '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>\n'
+    html_out += _SP * (indent + 2) + '<span class="toggle-slider"></span>\n'
+    html_out += _SP * (indent + 1) + '</label>\n'
+    html_out += _SP * indent + '</div>\n'
+    return html_out
 
 
 @register("grid")
-def _render_grid(card: Card) -> str:
+def _render_grid(card: Card, indent: int = 2) -> str:
     columns = card.get("columns", 2)
     raw_cards = card.get("cards", [])
-    children = []
+    children = ""
     for c in raw_cards:
         if isinstance(c, dict):
-            children.append(Markup(_render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}))))
-    return render_template("cards/grid.html.j2",
-        columns=columns,
-        children=children,
-    )
+            children += "\n" + _render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}), indent + 1)
+    if children:
+        children += "\n" + _SP * indent
+    return _h("div", {"class": "ha-card grid-card", "style": "--cols: " + str(columns)}, children, indent)
 
 
 @register("horizontal-stack")
-def _render_hstack(card: Card) -> str:
+def _render_hstack(card: Card, indent: int = 2) -> str:
     raw_cards = card.get("cards", [])
-    children = []
+    children = ""
     for c in raw_cards:
         if isinstance(c, dict):
-            children.append(Markup(_render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}))))
-    return render_template("cards/hstack.html.j2",
-        children=children,
-    )
+            children += "\n" + _render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}), indent + 1)
+    if children:
+        children += "\n" + _SP * indent
+    return _h("div", {"class": "ha-card hstack-card"}, children, indent)
 
 
 @register("vertical-stack")
-def _render_vstack(card: Card) -> str:
+def _render_vstack(card: Card, indent: int = 2) -> str:
     raw_cards = card.get("cards", [])
-    children = []
+    children = ""
     for c in raw_cards:
         if isinstance(c, dict):
-            children.append(Markup(_render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}))))
-    return render_template("cards/vstack.html.j2",
-        children=children,
-    )
+            children += "\n" + _render_card(Card(type=c.get("type", ""), config={k: v for k, v in c.items() if k != "type"}), indent + 1)
+    if children:
+        children += "\n" + _SP * indent
+    return _h("div", {"class": "ha-card vstack-card"}, children, indent)
 
 
 @register("conditional")
-def _render_conditional(card: Card) -> str:
+def _render_conditional(card: Card, indent: int = 2) -> str:
     conditions = card.get("conditions", [])
     raw_card = card.get("card", {})
     if not isinstance(raw_card, dict):
-        return _render_placeholder(card)
-    child = Markup(_render_card(Card(type=raw_card.get("type", ""), config={k: v for k, v in raw_card.items() if k != "type"})))
+        return _render_placeholder(card, indent)
+
+    child = _render_card(Card(type=raw_card.get("type", ""), config={k: v for k, v in raw_card.items() if k != "type"}), indent + 1)
+
     cond_json = html.escape(json.dumps(conditions))
     cond_id = "cond-" + str(hash(json.dumps(conditions, sort_keys=True)) & 0xFFFFFFFF)
-    return render_template("cards/conditional.html.j2",
-        cond_id=cond_id,
-        conditions_json=cond_json,
-        child=child,
-    )
+
+    attrs = {
+        "class": "conditional-card",
+        "id": cond_id,
+        "data-conditions": cond_json,
+    }
+
+    content = "\n" + _SP * (indent + 1) + child + "\n" + _SP * indent
+    return _h("div", attrs, content, indent)
 
 
 @register("light")
-def _render_light(card: Card) -> str:
+def _render_light(card: Card, indent: int = 2) -> str:
     eid = card.get("entity", "")
-    ctx = {
-        "name": html.escape(card.get("name", _friendly_name(eid))),
-        "icon": Markup(_icon_html(_entity_icon(eid, card.get("icon", "")), 24)),
-        "state_span": Markup(_entity_span(eid)),
-        "toggle_attrs": Markup(_build_attrs(_action_attrs(eid, "toggle"))),
-        "slider_attrs": Markup(_build_attrs({
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 24)
+    state_span = _entity_span(eid, indent=indent + 2)
+
+    toggle_attrs = _action_attrs(eid, "toggle")
+
+    content = (
+        '\n'
+        + _SP * (indent + 1) + '<div class="light-content">\n'
+        + _SP * (indent + 2) + '<div class="light-icon"' + _build_attrs(toggle_attrs) + '>' + icon + '</div>\n'
+        + _SP * (indent + 2) + '<div class="light-info">\n'
+        + _SP * (indent + 3) + '<div class="light-name">' + name + '</div>\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 2) + '<input type="range" class="light-slider" min="0" max="100" value="0" '
+        + _build_attrs({
             "hx-post": _url("/action"),
             "hx-trigger": "change",
             "hx-vals": _js_obj(entity_id=eid, action="call-service", service="light.turn_on", data={}),
             "hx-vals-js": '{"data": {"brightness_pct": parseInt(event.target.value)}}',
             "hx-swap": "none",
-        })),
-    }
-    return render_template("cards/light.html.j2", **ctx)
+        }) + '>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
+    )
+    return _h("div", {"class": "ha-card light-card"}, content, indent)
 
 
 @register("sensor")
-def _render_sensor(card: Card) -> str:
+def _render_sensor(card: Card, indent: int = 2) -> str:
     eid = card.get("entity", "")
+    name = html.escape(card.get("name", _friendly_name(eid)))
+    icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 20)
+    state_span = _entity_span(eid, indent=indent + 2)
     graph_type = card.get("graph", "")
-    hours = card.get("hours_to_show", 24)
-    ctx = {
-        "eid": eid,
-        "name": html.escape(card.get("name", _friendly_name(eid))),
-        "icon": Markup(_icon_html(_entity_icon(eid, card.get("icon", "")), 20)),
-        "state_span": Markup(_entity_span(eid)),
-        "graph": {"type": graph_type, "hours": hours} if graph_type else None,
-    }
-    return render_template("cards/sensor.html.j2", **ctx)
+
+    content = (
+        '\n'
+        + _SP * (indent + 1) + '<div class="sensor-content">\n'
+        + _SP * (indent + 2) + '<div class="sensor-icon">' + icon + '</div>\n'
+        + _SP * (indent + 2) + '<div class="sensor-info">\n'
+        + _SP * (indent + 3) + '<div class="sensor-name">' + name + '</div>\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
+    )
+
+    graph_html = ""
+    if graph_type:
+        hours = card.get("hours_to_show", 24)
+        graph_html = '\n' + _SP * (indent + 1) + '<div class="sensor-graph" data-entity="' + html.escape(eid) + '" data-hours="' + str(hours) + '"></div>\n' + _SP * indent
+
+    return _h("div", {"class": "ha-card sensor-card"}, "\n" + content + graph_html, indent)
 
 
 @register("history-graph")
-def _render_history_graph(card: Card) -> str:
+def _render_history_graph(card: Card, indent: int = 2) -> str:
     title = html.escape(card.get("title", ""))
     raw_entities = card.get("entities", [])
     hours = card.get("hours_to_show", 24)
+
     eids = []
     for ent in raw_entities:
         if isinstance(ent, str):
             eids.append(ent)
         elif isinstance(ent, dict):
             eids.append(ent.get("entity", ""))
+
+    header = ""
+    if title:
+        header = '\n' + _SP * (indent + 1) + '<div class="graph-header">' + title + '</div>'
+
     chart_data = html.escape(json.dumps({"entities": eids, "hours": hours}))
-    return render_template("cards/history_graph.html.j2",
-        title=title,
-        chart_data=chart_data,
-    )
+    chart_div = '\n' + _SP * (indent + 1) + '<div class="history-graph" data-chart=\'' + chart_data + '\'></div>\n' + _SP * indent
+
+    content = header + chart_div
+    return _h("div", {"class": "ha-card graph-card"}, content, indent)
 
 
 @register("gauge")
-def _render_gauge(card: Card) -> str:
+def _render_gauge(card: Card, indent: int = 2) -> str:
     eid = card.get("entity", "")
     name = html.escape(card.get("name", _friendly_name(eid)))
     min_v = card.get("min", 0)
     max_v = card.get("max", 100)
     severity = card.get("severity", {})
-    severity_json = html.escape(json.dumps(severity)) if severity else ""
-    ctx = {
-        "name": name,
-        "state_span": Markup(_entity_span(eid)),
-        "min": str(min_v),
-        "max": str(max_v),
-        "severity": severity_json,
+
+    state_span = _entity_span(eid, indent=indent + 2)
+    attrs = {
+        "class": "ha-card gauge-card",
+        "data-min": str(min_v),
+        "data-max": str(max_v),
     }
-    return render_template("cards/gauge.html.j2", **ctx)
+    if severity:
+        attrs["data-severity"] = html.escape(json.dumps(severity))
+
+    content = (
+        '\n'
+        + _SP * (indent + 1) + '<div class="gauge-content">\n'
+        + _SP * (indent + 2) + '<div class="gauge-value">\n'
+        + _SP * (indent + 3) + state_span + '\n'
+        + _SP * (indent + 2) + '</div>\n'
+        + _SP * (indent + 2) + '<div class="gauge-name">' + name + '</div>\n'
+        + _SP * (indent + 1) + '</div>\n'
+        + _SP * indent
+    )
+    return _h("div", attrs, content, indent)
 
 
 @register("iframe")
-def _render_iframe(card: Card) -> str:
+def _render_iframe(card: Card, indent: int = 2) -> str:
     url = html.escape(card.get("url", ""))
     aspect = card.get("aspect_ratio", "50%")
-    return render_template("cards/iframe.html.j2",
-        url=url,
-        aspect_ratio=html.escape(str(aspect)),
-    )
+    style = "aspect-ratio: " + html.escape(str(aspect))
+    content = '\n' + _SP * (indent + 1) + '<iframe src="' + url + '" style="' + style + ';width:100%;border:none"></iframe>\n' + _SP * indent
+    return _h("div", {"class": "ha-card iframe-card"}, content, indent)
 
 
 @register("clock")
-def _render_clock(card: Card) -> str:
+def _render_clock(card: Card, indent: int = 2) -> str:
     tz = card.get("time_zone", "Europe/London")
     fmt = card.get("time_format", "24")
     sec = card.get("show_seconds", False)
     size = card.get("clock_size", "medium")
     no_bg = card.get("no_background", False)
+
     size_class = f"clock-size-{size}"
+    attrs = {"class": f"ha-card clock-card {size_class}"}
+    if no_bg:
+        attrs["class"] += " clock-no-bg"
+
     clock_id = f"c{abs(hash(tz+fmt+str(sec)))%99999999}"
-    return render_template("cards/clock.html.j2",
-        tz=tz,
-        fmt=fmt,
-        sec=sec,
-        size_class=size_class,
-        no_bg=no_bg,
-        clock_id=clock_id,
+
+    content = (
+        '\n'
+        + _SP * (indent + 1)
+        + f'<div class="clock-digital" id="{clock_id}"'
+        + f' data-tz="{html.escape(tz)}"'
+        + f' data-fmt="{html.escape(fmt)}"'
+        + (' data-sec="1"' if sec else '')
+        + '>--:--</div>\n'
+        + _SP * indent
     )
+    return _h("div", attrs, content, indent)
 
 
-# ── Markdown renderer ────────────────────────────────────────────────────
+# ---- Helpers --------------------------------------------------------------
+
+
+def _friendly_name(entity_id: str) -> str:
+    parts = entity_id.split(".")
+    if len(parts) < 2:
+        return entity_id
+    raw = parts[1].replace("_", " ").replace("-", " ")
+    return raw.title()
 
 
 def _render_markdown_text(text: str) -> str:
@@ -1016,33 +1255,3 @@ def _inline_md(text: str) -> str:
     text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
     text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2" target="_blank">\1</a>', text)
     return text
-
-
-def _friendly_name(entity_id: str) -> str:
-    parts = entity_id.split(".")
-    if len(parts) < 2:
-        return entity_id
-    raw = parts[1].replace("_", " ").replace("-", " ")
-    return raw.title()
-
-
-# ── Register Jinja2 globals ─────────────────────────────────────────────
-
-
-register_helpers({
-    "url": _url,
-    "build_attrs": lambda d: Markup(_build_attrs(d)),
-    "entity_span": lambda e, c="", i=0: Markup(_entity_span(e, c, i)),
-    "icon_html": lambda i, s=24: Markup(_icon_html(i, s)),
-    "entity_icon": _entity_icon,
-    "friendly_name": _friendly_name,
-    "is_binary": _is_binary_domain,
-    "toggle_service": _domain_toggle_service,
-    "color_icon": _color_icon,
-    "js_obj": lambda **kw: Markup(_js_obj(**kw)),
-    "tap_action_attrs": _tap_action_attrs,
-    "action_attrs": _action_attrs,
-    "sw_script": _SW_SCRIPT,
-    "html_escape": html.escape,
-    "_DEFAULT_ICONS": _DEFAULT_ICONS,
-})
