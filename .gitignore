@@ -182,3 +182,5 @@ cython_debug/
 
 # Local dev symlink — real code lives in addons/lightdash/app/
 /app
+
+addons/lightdash/config/
