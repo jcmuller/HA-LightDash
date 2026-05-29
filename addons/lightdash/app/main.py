@@ -247,7 +247,18 @@ async def handle_action(request: Request):
     action_type = data.get("action", "toggle")
     service = data.get("service", "")
     target = data.get("target", {})
+    if isinstance(target, str):
+        try:
+            target = json.loads(target) if target.strip() else {}
+        except (json.JSONDecodeError, ValueError):
+            target = {}
+
     action_data = data.get("data", {})
+    if isinstance(action_data, str):
+        try:
+            action_data = json.loads(action_data) if action_data.strip() else {}
+        except (json.JSONDecodeError, ValueError):
+            action_data = {}
 
     logger.info("Action: entity=%s action=%s service=%s", entity_id, action_type, service)
 
