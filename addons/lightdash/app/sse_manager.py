@@ -13,6 +13,7 @@ class SSEManager:
     def __init__(self):
         self._clients: Set[asyncio.Queue] = set()
         self._entity_subscriptions: Dict[str, Set[asyncio.Queue]] = {}
+        self.allowed_entities: Set[str] = set()
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()
@@ -107,6 +108,11 @@ class SSEManager:
                         entity_id = event_data.get("entity_id", "")
                         new_state = event_data.get("new_state", {})
                         if entity_id and new_state:
+                            if (
+                                self.allowed_entities
+                                and entity_id not in self.allowed_entities
+                            ):
+                                continue
                             self.notify_entity(entity_id, new_state)
 
             except asyncio.CancelledError:
