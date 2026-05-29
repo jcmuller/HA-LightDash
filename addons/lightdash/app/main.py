@@ -20,7 +20,7 @@ from app.config import AppConfig
 from app.ha_client import HAClient
 from app.parser import parse_dashboard
 from markupsafe import Markup
-from app.renderer import render_error, render_view, render_view_index
+from app.renderer import render_error, render_view
 from app.template_env import render_template
 from app.sse_manager import SSEManager
 
