@@ -6,12 +6,9 @@ Only a few days old, and LightDash has already had a handful of feature requests
   function now runs on every HTMX content swap, not just on page load.
 
 ## v0.8.0 (2026-05-29)
-- **Rollback:** Replaced Jinja2 template rendering with inline f-string HTML.
-  Jinja2 was too heavy for low-powered Home Assistant containers and added an
-  extra dependency without meaningful benefit for this project's rendering needs.
-- **Kept:** Optimistic toggle updates, loading pulse animation, and all CSS
-  improvements from v0.7.1–v0.7.2.
-- **Removed:** `jinja2` and `markupsafe` from dependencies.
+- **Experiment:** Tested moving inline HTML/JS into Jinja2 templates, but found it was
+  far too slow for lower-CPU Home Assistant devices like the HA Yellow, and reverted to
+  the less-clean but much higher performing approach retained, albeit with some flow improvements.
 
 ## v0.7.2 (2026-05-29)
 - **Optimistic toggle updates** — switches now flip instantly when clicked, no
