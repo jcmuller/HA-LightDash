@@ -1,0 +1,6 @@
+<div class="ha-card gauge-card" data-min="{{ min }}" data-max="{{ max }}"{% if severity %} data-severity="{{ severity }}"{% endif %}>
+  <div class="gauge-content">
+    <div class="gauge-value">{{ state_span }}</div>
+    <div class="gauge-name">{{ name }}</div>
+  </div>
+</div>

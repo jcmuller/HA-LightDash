@@ -1,0 +1,16 @@
+{% extends "base.html.j2" %}
+{% block content %}
+<div class="view-index">
+<h1>LightDash</h1>
+<ul class="dashboard-list">
+{% if items %}
+  {% for item in items %}
+  <li><a href="{{ item.href }}">{{ item.title }}</a></li>
+  {% endfor %}
+{% else %}
+  <li class="empty">No dashboards yet. <a href="{{ config_url }}">Add one</a>.</li>
+{% endif %}
+</ul>
+<p class="config-link"><a href="{{ config_url }}">&#x2699; Config</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,10 @@
+<div class="ha-card glance-card" style="--cols: {{ columns }}">
+  {% if title %}<div class="glance-header">{{ title }}</div>{% endif %}
+  {% for item in items %}
+  <div class="glance-item"{{ item.attrs }}>
+    <div class="glance-icon">{{ item.icon }}</div>
+    <div class="glance-name">{{ item.name }}</div>
+    {{ item.state_span }}
+  </div>
+  {% endfor %}
+</div>

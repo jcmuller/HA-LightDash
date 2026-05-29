@@ -1,0 +1,5 @@
+<div class="section-grid" style="--section-cols: {{ cols }}">
+{% for cell in cells %}
+  <div{{ cell.attrs }}>{{ cell.content }}</div>
+{% endfor %}
+</div>

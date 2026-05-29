@@ -1,0 +1,24 @@
+{% extends "base.html.j2" %}
+{% block head_extra %}
+<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script src="https://unpkg.com/htmx-ext-sse@2.2.4/dist/sse.js"></script>
+{% if needs_uplot %}
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+{% endif %}
+{% if needs_toggle_sync %}
+<script src="{{ url('/static/toggle_sync.js') }}"></script>
+{% endif %}
+{% if needs_slider_sync %}
+<script>var STATE_API_URL = {{ state_api_url | tojson }};</script>
+<script src="{{ url('/static/slider_sync.js') }}"></script>
+{% endif %}
+{% if needs_clock %}
+<script src="{{ url('/static/clock.js') }}"></script>
+{% endif %}
+{% endblock %}
+{% block content %}
+<div class="lv-view" id="view-{{ path }}" hx-ext="sse" sse-connect="{{ sse_url }}" style="{{ bg_style }}">
+{{ cards_html }}
+</div>
+{% endblock %}

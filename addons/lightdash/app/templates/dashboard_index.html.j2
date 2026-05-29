@@ -1,0 +1,12 @@
+{% extends "base.html.j2" %}
+{% block content %}
+<div class="view-index">
+<h1>LightDash</h1>
+<p>Select a dashboard:</p>
+<ul>
+{% for link in links %}
+  <li><a href="{{ link.href }}">{{ link.title }} ({{ link.name }})</a></li>
+{% endfor %}
+</ul>
+</div>
+{% endblock %}

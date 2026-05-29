@@ -1,0 +1,1 @@
+<span class="entity-state" id="state-{{ entity_id | e }}" data-entity="{{ entity_id }}" hx-get="{{ url('/api/value/' ~ (entity_id | e)) }}" hx-trigger="load" hx-swap="innerHTML" sse-swap="entity_{{ entity_id | replace('.', '_') }}"></span>

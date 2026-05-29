@@ -1,0 +1,25 @@
+{% if features %}
+<div class="tile-features">
+{% for f in features %}
+  {% if f.type == "light-brightness" %}
+  <div class="feature-row">
+    {% if not inline %}<span class="feature-label">Brightness</span>{% endif %}
+    <input type="range" class="feature-slider" min="0" max="100" value="{{ f.pct }}"{{ f.slider_attrs }}>
+  </div>
+  {% elif f.type == "light-color-temp" %}
+  <div class="feature-row">
+    <span class="feature-label">Color Temp</span>
+    <input type="range" class="feature-slider" min="153" max="500"{{ f.slider_attrs }}>
+  </div>
+  {% elif f.type == "numeric-input" %}
+  <div class="feature-row">
+    <div class="numeric-input">
+      <button class="num-btn" aria-label="Decrement"{{ f.dec_attrs }}>−</button>
+      {{ f.state_span }}
+      <button class="num-btn" aria-label="Increment"{{ f.inc_attrs }}>+</button>
+    </div>
+  </div>
+  {% endif %}
+{% endfor %}
+</div>
+{% endif %}

@@ -1,0 +1,9 @@
+{% set dom = entity_id.split(".")[0] if "." in entity_id else "" %}
+{% set svc = toggle_service(dom) %}
+{% set vals = js_obj(entity_id=entity_id, action="toggle", service=svc) %}
+<div class="entity-toggle" onclick="event.stopPropagation()">
+<label class="toggle-switch">
+<input type="checkbox" class="toggle-input" hx-post="{{ url('/action') }}" hx-trigger="change" hx-vals="{{ vals }}" hx-swap="none">
+<span class="toggle-slider"></span>
+</label>
+</div>
