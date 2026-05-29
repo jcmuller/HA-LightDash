@@ -30,6 +30,45 @@ APP_DIR = Path(__file__).parent
 _SW_SCRIPT = '<script>if(navigator.serviceWorker){navigator.serviceWorker.getRegistrations().then(function(r){for(var i=0;i<r.length;i++){r[i].unregister()}})}</script>'
 
 
+async def _watch_dashboard_files(
+    data_dir: Path, dashboards: dict, sse: SSEManager
+) -> None:
+    from app.parser import parse_dashboard_from_file
+
+    if not data_dir.exists():
+        return
+
+    mtimes: dict = {p.stem: p.stat().st_mtime for p in data_dir.glob("*.yaml")}
+
+    while True:
+        await asyncio.sleep(2)
+        try:
+            current = {p.stem: p for p in data_dir.glob("*.yaml")}
+            changed = False
+            for name, path in current.items():
+                mtime = path.stat().st_mtime
+                if mtimes.get(name) != mtime:
+                    try:
+                        parsed = parse_dashboard_from_file(str(path))
+                        scan_dashboard(parsed)
+                        dashboards[name] = parsed
+                        logger.info("Reloaded dashboard from disk: %s", name)
+                        mtimes[name] = mtime
+                        changed = True
+                    except Exception as e:
+                        logger.warning("Failed to reload %s: %s", name, e)
+            for name in list(mtimes):
+                if name not in current:
+                    dashboards.pop(name, None)
+                    del mtimes[name]
+                    logger.info("Removed dashboard: %s", name)
+                    changed = True
+            if changed:
+                _rebuild_entity_filter(dashboards, sse)
+        except Exception as e:
+            logger.warning("Dashboard watch error: %s", e)
+
+
 def _rebuild_entity_filter(dashboards: dict, sse: SSEManager) -> None:
     entities: set = set()
     for d in dashboards.values():
@@ -77,6 +116,12 @@ async def lifespan(app: FastAPI):
     _rebuild_entity_filter(dashboards, sse)
 
     yield
+
+    watch_task.cancel()
+    try:
+        await watch_task
+    except asyncio.CancelledError:
+        pass
 
     task.cancel()
     try:
