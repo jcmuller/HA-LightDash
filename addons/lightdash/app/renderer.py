@@ -173,9 +173,10 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
             'hour12:e.getAttribute("data-fmt")!=="24"};'
             'if(e.getAttribute("data-sec"))o.second="2-digit";'
             'e.textContent=(new Intl.DateTimeFormat("en-GB",o)).format(new Date())})}\n'
-            'setInterval(uc,30000);\n'
-            'document.addEventListener("DOMContentLoaded",uc);\n'
-            '</script>\n'
+             'setInterval(uc,30000);\n'
+             'document.addEventListener("DOMContentLoaded",uc);\n'
+             'document.addEventListener("htmx:afterSwap",uc);\n'
+             '</script>\n'
         )
 
     return (
