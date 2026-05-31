@@ -1,6 +1,18 @@
 # Changelog
 Only a few days old, and LightDash has already had a handful of feature requests and 8 pull requests with contributions from other users! Shout-out to `jcmuller` on GitHub, who contributed quality-of-development improvements to make it easier to work with as a developer, a few fixes for layout bugs and column support, and a bugfix for incorrect data parsing with some entity types. Thanks, Juan!
 
+## v0.10.3 (2026-05-31)
+- **Fixed:** External state changes (e.g. toggling a light from HA directly) not
+  reflected in frontend — `htmx:sseMessage` handler was reading
+  `e.detail.elt` (always `undefined` because the detail is a raw SSE
+  `MessageEvent`, not an HTMX event with an `elt` property). Changed to
+  `e.target`, which is the element the event was dispatched on (the entity-state
+  span).
+- **Fixed:** `st()` moved before the guard in `htmx:sseMessage` handler so
+  toggle sync runs even if the event target isn't an entity-state span.
+- **Fixed:** Same `e.detail.elt` → `e.target` fix in the slider sync
+  `htmx:sseMessage` handler (`ss()` function).
+
 ## v0.10.2 (2026-05-31)
 - **Fixed:** Tile cards with `hide_state: true` (e.g. Porch, Entryway) showing no
   visual state change when toggled — always render hidden entity-state span for
