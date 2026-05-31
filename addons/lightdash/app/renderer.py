@@ -6,6 +6,7 @@ import httpx
 import json
 import logging
 import re
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.compat import JINJA_RE
@@ -58,7 +59,8 @@ _ha_url: str = ""
 _dashboard_name: str = ""
 _base_path: str = ""
 _via_ingress = contextvars.ContextVar("renderer_via_ingress", default=False)
-_icon_svg_cache: Dict[str, str] = {}
+_icon_svg_cache: Dict[str, str] = OrderedDict()
+_ICON_CACHE_MAX = 200
 
 _SW_SCRIPT = (
     '<script>'
@@ -413,19 +415,30 @@ def _build_attrs(attrs: Dict[str, str]) -> str:
     return " " + " ".join(parts) if parts else ""
 
 
+def _format_entity_state(entity_id: str) -> Optional[str]:
+    state = _entity_states.get(entity_id)
+    if not state:
+        return None
+    val = state.get("state", "")
+    unit = state.get("attributes", {}).get("unit_of_measurement", "")
+    return f"{val} {unit}" if unit else str(val)
+
+
 def _entity_span(entity_id: str, card_id: str = "", indent: int = 0) -> str:
     sid = html.escape(entity_id)
+    display = _format_entity_state(entity_id)
     attrs: Dict[str, str] = {
         "class": "entity-state",
         "id": f"state-{sid}",
         "data-entity": entity_id,
-        "hx-get": _url(f"/api/value/{sid}"),
-        "hx-trigger": "load",
-        "hx-swap": "innerHTML",
     }
+    if display is None:
+        attrs["hx-get"] = _url(f"/api/value/{sid}")
+        attrs["hx-trigger"] = "load"
+        attrs["hx-swap"] = "innerHTML"
     sse_event = "entity_" + entity_id.replace(".", "_")
     attrs["sse-swap"] = sse_event
-    return _h("span", attrs, "", indent)
+    return _h("span", attrs, html.escape(display) if display is not None else "", indent)
 
 
 def _prefetch_icons(view: View) -> None:
@@ -466,6 +479,8 @@ def _prefetch_icons(view: View) -> None:
                     logger.warning("Icon fetch failed %s: HTTP %d", name, r.status_code)
             except Exception as e:
                 logger.warning("Icon fetch error %s: %s", name, e)
+    while len(_icon_svg_cache) > _ICON_CACHE_MAX:
+        _icon_svg_cache.pop(next(iter(_icon_svg_cache)), None)
 
 
 def _icon_html(icon: str, size: int = 24) -> str:

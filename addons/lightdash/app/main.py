@@ -20,7 +20,7 @@ from app.config import AppConfig
 from app.ha_client import HAClient
 from app.parser import parse_dashboard
 from app.renderer import render_error, render_view, render_view_index
-from app.sse_manager import SSEManager
+from app.sse_manager import SSEManager, run_ha_websocket
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ async def _watch_dashboard_files(
     mtimes: dict = {p.stem: p.stat().st_mtime for p in data_dir.glob("*.yaml")}
 
     while True:
-        await asyncio.sleep(2)
+        await asyncio.sleep(10)
         try:
             current = {p.stem: p for p in data_dir.glob("*.yaml")}
             changed = False
@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
         logger.info("Running in offline mode — HA features disabled")
 
     sse = SSEManager()
-    task = asyncio.create_task(sse.run_ha_websocket(config.ha_url, config.ha_token))
+    task = asyncio.create_task(run_ha_websocket(config.ha_url, config.ha_token, sse))
 
     dashboards = AppConfig.load_dashboards(config.config_dir, config.is_addon)
     logger.info("Loaded %d dashboard(s)", len(dashboards))
@@ -281,11 +281,15 @@ async def dashboard_view(name: str, view_path: str):
 async def health():
     ha = getattr(app.state, "ha_client", None)
     ha_ok = ha and ha.is_connected
+    sse = getattr(app.state, "sse", None)
+    ws_ok = sse and sse.connected
     dashboards = getattr(app.state, "dashboards", {})
     bp = _bp()
     return {
         "status": "ok",
         "ha_connected": ha_ok,
+        "ha_websocket": ws_ok,
+        "sse_clients": len(sse._clients) if sse else 0,
         "dashboards_loaded": len(dashboards),
         "dashboards": {
             name: f"{bp}/d/{name}"
