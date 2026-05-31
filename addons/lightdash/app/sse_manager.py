@@ -62,8 +62,11 @@ async def run_ha_websocket(ha_url: str, ha_token: str, sse: SSEManager):
     import websockets
     import time
 
+    logger.info("HA WebSocket listener started")
+
     ws_url = ha_url.replace("http://", "ws://").replace("https://", "wss://").strip("/")
     ws_url = f"{ws_url}/api/websocket"
+    logger.info("WebSocket target: %s", ws_url)
 
     use_ssl = ha_url.startswith("https://")
     ctx = None

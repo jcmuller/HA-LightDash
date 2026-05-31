@@ -23,6 +23,7 @@ from app.renderer import render_error, render_view, render_view_index
 from app.sse_manager import SSEManager, run_ha_websocket
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.getLogger("app.sse_manager").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 APP_DIR = Path(__file__).parent
@@ -91,6 +92,7 @@ async def lifespan(app: FastAPI):
     if not connected:
         logger.info("Running in offline mode — HA features disabled")
 
+    logger.info("Starting HA WebSocket listener for %s", config.ha_url)
     sse = SSEManager()
     task = asyncio.create_task(run_ha_websocket(config.ha_url, config.ha_token, sse))
 
