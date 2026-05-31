@@ -497,13 +497,13 @@ def _entity_span(entity_id: str, card_id: str = "", indent: int = 0) -> str:
     if display is None:
         attrs["hx-get"] = _url(f"/api/value/{sid}")
         attrs["hx-trigger"] = "load"
-        attrs["hx-swap"] = "innerHTML"
     else:
         brightness = state.get("attributes", {}).get("brightness") if state else None
         if brightness is not None:
             pct = max(0, min(255, int(brightness))) * 100 // 255
             attrs["data-brightness"] = str(brightness)
             attrs["style"] = f"--b: {pct}"
+    attrs["hx-swap"] = "innerHTML"
     sse_event = "entity_" + entity_id.replace(".", "_")
     attrs["sse-swap"] = sse_event
     return _h("span", attrs, html.escape(display) if display is not None else "", indent)

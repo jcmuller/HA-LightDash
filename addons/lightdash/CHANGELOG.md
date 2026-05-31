@@ -1,6 +1,13 @@
 # Changelog
 Only a few days old, and LightDash has already had a handful of feature requests and 8 pull requests with contributions from other users! Shout-out to `jcmuller` on GitHub, who contributed quality-of-development improvements to make it easier to work with as a developer, a few fixes for layout bugs and column support, and a bugfix for incorrect data parsing with some entity types. Thanks, Juan!
 
+## v0.10.4 (2026-05-31)
+- **Fixed:** External state changes (HA toggles) not updating the UI — SSE
+  extension's `swap()` was silently a no-op because the entity-state span
+  inherited `hx-swap="none"` from its parent `.entity-row` (needed for toggle
+  actions). Fixed by always setting `hx-swap="innerHTML"` on every entity-state
+  span, overriding ancestor inheritance.
+
 ## v0.10.3 (2026-05-31)
 - **Fixed:** External state changes (e.g. toggling a light from HA directly) not
   reflected in frontend — `htmx:sseMessage` handler was reading
