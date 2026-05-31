@@ -6,6 +6,7 @@ import httpx
 import json
 import logging
 import re
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.compat import JINJA_RE
@@ -58,7 +59,8 @@ _ha_url: str = ""
 _dashboard_name: str = ""
 _base_path: str = ""
 _via_ingress = contextvars.ContextVar("renderer_via_ingress", default=False)
-_icon_svg_cache: Dict[str, str] = {}
+_icon_svg_cache: Dict[str, str] = OrderedDict()
+_ICON_CACHE_MAX = 200
 
 _SW_SCRIPT = (
     '<script>'
@@ -120,36 +122,78 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
             '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">\n'
         )
     if _view_needs_toggle_sync(view):
+        state_api_url = _url("/api/state/")
         head_extra += (
             '<script>\n'
+            'var sau="' + state_api_url + '";\n'
             'function st(){'
             'document.querySelectorAll(".tile-card").forEach(function(e){'
             'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
-            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            'if(s){var o=s.textContent.trim()==="on";if(t)t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
             '});'
             'document.querySelectorAll(".entities-card .entity-row").forEach(function(e){'
             'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
-            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            'if(s){var o=s.textContent.trim()==="on";if(t)t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
             '});}\n'
-             'document.addEventListener("htmx:afterSwap",st);\n'
-             'document.addEventListener("htmx:sseMessage",st);\n'
-             'document.addEventListener("change",function(e){'
-             'var i=e.target;'
-             'if(!i.classList.contains("toggle-input"))return;'
-             'var on=i.checked;'
-             'var c=i.closest(".tile-card,.entity-row");'
-             'if(c){c.classList.toggle("entity-on",on);c.classList.toggle("entity-off",!on);}'
-             'var s=c&&c.querySelector(".entity-state");'
-             'if(s){var t=s.textContent.trim().toLowerCase();if(t==="on"||t==="off")s.textContent=on?"on":"off";}'
+            'function uc(s){'
+            'var t0=s.textContent.trim().toLowerCase();'
+            'var c=s.closest(".tile-card,.entity-row,.glance-item,.button-card,button");'
+            'if(!c||(t0!=="on"&&t0!=="off"))return;'
+            'var p=t0==="off"?0:+s.style.getPropertyValue("--b")||100;'
+            'p=Math.max(0,Math.min(100,p));'
+            'var r=Math.round(221+25*p/100),g=Math.round(221-26*p/100),b=Math.round(221-153*p/100);'
+            'var clr="#"+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);'
+            'if(c.classList.contains("tile-card"))c.style.setProperty("--tile-color",clr);'
+            'else c.style.setProperty("--state-color",clr);'
+            '}\n'
+             'document.addEventListener("DOMContentLoaded",function(){st();document.querySelectorAll(".entity-state").forEach(uc);});\n'
+             'document.addEventListener("htmx:afterSwap",function(){st();document.querySelectorAll(".entity-state").forEach(uc);});\n'
+              'document.addEventListener("htmx:sseMessage",function(e){'
+              'st();'
+              'var s=e.target;'
+              'if(!s||!s.classList.contains("entity-state"))return;'
+             'var eid=s.getAttribute("data-entity");'
+             'if(eid&&s.getAttribute("data-brightness")){'
+             'fetch(sau+eid).then(function(r){return r.json()}).then(function(d){'
+             'if(d&&d.attributes&&d.attributes.brightness){'
+             'var p=Math.round(d.attributes.brightness/255*100);'
+             's.style.setProperty("--b",p);'
+             's.setAttribute("data-brightness",d.attributes.brightness);}'
+             'uc(s);});'
+             '}else{uc(s);}'
              '});\n'
+              'document.addEventListener("change",function(e){'
+              'var i=e.target;'
+              'if(!i.classList.contains("toggle-input"))return;'
+              'var on=i.checked;'
+              'var c=i.closest(".tile-card,.entity-row");'
+              'if(c){c.classList.toggle("entity-on",on);c.classList.toggle("entity-off",!on);}'
+              'var s=c&&c.querySelector(".entity-state");'
+              'if(s){var t0=s.textContent.trim().toLowerCase();if(t0==="on"||t0==="off")s.textContent=on?"on":"off";uc(s);}'
+              '});\n'
+              'document.addEventListener("click",function(e){'
+              'var c=e.target.closest(".tile-card,.entity-row");'
+              'if(!c)return;'
+              'if(e.target.closest("button,a,input,select,textarea,.toggle-switch,.entity-toggle"))return;'
+               'var s=c.querySelector(".entity-state"),t=c.querySelector(".toggle-input");'
+               'if(!s)return;'
+              'var x=s.textContent.trim().toLowerCase();'
+              'if(x!=="on"&&x!=="off")return;'
+              'var on=x==="on"?false:true;'
+              's.textContent=on?"on":"off";'
+               'if(t)t.checked=on;'
+              'c.classList.toggle("entity-on",on);'
+              'c.classList.toggle("entity-off",!on);'
+              'uc(s);'
+              '});\n'
              '</script>\n'
         )
     if _view_needs_slider_sync(view):
         state_api_url = _url("/api/state/")
         head_extra += (
             '<script>\n'
-            'function ss(e){'
-            'var s=e.detail.elt;'
+             'function ss(e){'
+             'var s=e.target;'
             'if(!s||!s.classList.contains("entity-state"))return;'
             'var c=s.closest(".tile-card");'
             'if(!c)return;'
@@ -167,15 +211,15 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
     if _view_needs_clock(view):
         head_extra += (
             '<script>\n'
-            'function uc(){document.querySelectorAll(".clock-digital").forEach('
+            'function uclk(){document.querySelectorAll(".clock-digital").forEach('
             'function(e){var o={hour:"2-digit",minute:"2-digit",'
             'timeZone:e.getAttribute("data-tz")||"Europe/London",'
             'hour12:e.getAttribute("data-fmt")!=="24"};'
             'if(e.getAttribute("data-sec"))o.second="2-digit";'
             'e.textContent=(new Intl.DateTimeFormat("en-GB",o)).format(new Date())})}\n'
-             'setInterval(uc,30000);\n'
-             'document.addEventListener("DOMContentLoaded",uc);\n'
-             'document.addEventListener("htmx:afterSwap",uc);\n'
+             'setInterval(uclk,30000);\n'
+             'document.addEventListener("DOMContentLoaded",uclk);\n'
+             'document.addEventListener("htmx:afterSwap",uclk);\n'
              '</script>\n'
         )
 
@@ -413,19 +457,56 @@ def _build_attrs(attrs: Dict[str, str]) -> str:
     return " " + " ".join(parts) if parts else ""
 
 
+def _format_entity_state(entity_id: str) -> Optional[str]:
+    state = _entity_states.get(entity_id)
+    if not state:
+        return None
+    val = state.get("state", "")
+    unit = state.get("attributes", {}).get("unit_of_measurement", "")
+    return f"{val} {unit}" if unit else str(val)
+
+
+def _icon_color_for_state(entity_id: str) -> str:
+    state = _entity_states.get(entity_id)
+    if not state:
+        return ""
+    state_val = state.get("state", "")
+    if state_val == "off":
+        return "#DDDDDD"
+    if state_val == "on":
+        brightness = state.get("attributes", {}).get("brightness")
+        if brightness is not None:
+            ratio = max(0, min(255, int(brightness))) / 255.0
+            r = int(221 + (246 - 221) * ratio)
+            g = int(221 + (195 - 221) * ratio)
+            b = int(221 + (68 - 221) * ratio)
+            return f"#{r:02x}{g:02x}{b:02x}"
+        return "#F6C344"
+    return ""
+
+
 def _entity_span(entity_id: str, card_id: str = "", indent: int = 0) -> str:
     sid = html.escape(entity_id)
+    display = _format_entity_state(entity_id)
+    state = _entity_states.get(entity_id)
     attrs: Dict[str, str] = {
         "class": "entity-state",
         "id": f"state-{sid}",
         "data-entity": entity_id,
-        "hx-get": _url(f"/api/value/{sid}"),
-        "hx-trigger": "load",
-        "hx-swap": "innerHTML",
     }
+    if display is None:
+        attrs["hx-get"] = _url(f"/api/value/{sid}")
+        attrs["hx-trigger"] = "load"
+    else:
+        brightness = state.get("attributes", {}).get("brightness") if state else None
+        if brightness is not None:
+            pct = max(0, min(255, int(brightness))) * 100 // 255
+            attrs["data-brightness"] = str(brightness)
+            attrs["style"] = f"--b: {pct}"
+    attrs["hx-swap"] = "innerHTML"
     sse_event = "entity_" + entity_id.replace(".", "_")
     attrs["sse-swap"] = sse_event
-    return _h("span", attrs, "", indent)
+    return _h("span", attrs, html.escape(display) if display is not None else "", indent)
 
 
 def _prefetch_icons(view: View) -> None:
@@ -466,6 +547,8 @@ def _prefetch_icons(view: View) -> None:
                     logger.warning("Icon fetch failed %s: HTTP %d", name, r.status_code)
             except Exception as e:
                 logger.warning("Icon fetch error %s: %s", name, e)
+    while len(_icon_svg_cache) > _ICON_CACHE_MAX:
+        _icon_svg_cache.pop(next(iter(_icon_svg_cache)), None)
 
 
 def _icon_html(icon: str, size: int = 24) -> str:
@@ -627,7 +710,10 @@ def _render_entity(card: Card, indent: int = 2) -> str:
     icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 20)
     state_span = _entity_span(eid, indent=indent + 2)
     icon_cell = '<div class="entity-icon">' + icon + "</div>" if icon else ""
-    attrs = {"class": "ha-card entity-card"}
+    attrs: Dict[str, str] = {"class": "ha-card entity-card"}
+    state_color = _icon_color_for_state(eid) if eid else ""
+    if state_color:
+        attrs["style"] = "--state-color: " + state_color
     ta = _tap_action_attrs(card)
     attrs.update(ta)
     content = (
@@ -672,6 +758,9 @@ def _render_entities(card: Card, indent: int = 2) -> str:
             continue
         row_controls = _render_cover_controls(eid, indent + 2) or _render_entity_toggle(eid, indent + 2)
         row_attrs: Dict[str, str] = {"class": "entity-row"}
+        state_color = _icon_color_for_state(eid) if eid else ""
+        if state_color:
+            row_attrs["style"] = "--state-color: " + state_color
         if _is_binary_domain(eid) and eid.split(".")[0] != "cover":
             dom = eid.split(".")[0]
             svc = _domain_toggle_service(dom)
@@ -720,12 +809,16 @@ def _render_glance(card: Card, indent: int = 2) -> str:
         icon = _icon_html(_entity_icon(eid, eicon), 20)
         state_span = _entity_span(eid, indent=indent + 3)
         ta_attrs = ""
+        style_attr = ""
+        state_color = _icon_color_for_state(eid) if eid else ""
+        if state_color:
+            style_attr = ' style="--state-color: ' + state_color + '"'
         if isinstance(ent, dict) and ent.get("tap_action"):
             e_card = Card(type="glance_item", config=ent)
             ta = _tap_action_attrs(e_card)
             ta_attrs = _build_attrs(ta)
         items += (
-            _SP * (indent + 1) + '<div class="glance-item"' + ta_attrs + '>\n'
+            _SP * (indent + 1) + '<div class="glance-item"' + ta_attrs + style_attr + '>\n'
             + _SP * (indent + 2) + '<div class="glance-icon">' + icon + '</div>\n'
             + _SP * (indent + 2) + '<div class="glance-name">' + html.escape(ename) + '</div>\n'
             + _SP * (indent + 2) + state_span + '\n'
@@ -745,13 +838,15 @@ def _render_button(card: Card, indent: int = 2) -> str:
     name = html.escape(card.get("name", card.get("entity", "Action")))
     eid = card.get("entity", "")
     icon = _icon_html(_entity_icon(eid, card.get("icon", "")), 28)
+    state_color = _icon_color_for_state(eid) if eid else ""
+    style_attr = ' style="--state-color: ' + state_color + '"' if state_color else ""
     ta_attrs = _tap_action_attrs(card)
 
     if not ta_attrs and card.get("entity"):
         ta_attrs = _action_attrs(card.get("entity", ""), "toggle")
 
     content = (
-        '\n' + _SP * (indent + 1) + '<button class="button-content"' + _build_attrs(ta_attrs) + '>\n'
+        '\n' + _SP * (indent + 1) + '<button class="button-content"' + _build_attrs(ta_attrs) + style_attr + '>\n'
         + _SP * (indent + 2) + '<div class="button-icon">' + icon + '</div>\n'
         + _SP * (indent + 2) + '<div class="button-name">' + name + '</div>\n'
         + _SP * (indent + 1) + '</button>\n'
@@ -771,13 +866,19 @@ def _render_tile(card: Card, indent: int = 2) -> str:
     features_inline = card.get("features_position", "") == "inline"
 
     attrs: Dict[str, str] = {"class": "ha-card tile-card"}
+    if hide_state:
+        attrs["class"] += " hide-state"
     if color:
         attrs["style"] = "--tile-color: " + color
+    elif eid:
+        state_color = _icon_color_for_state(eid)
+        if state_color:
+            attrs["style"] = "--tile-color: " + state_color
 
     is_binary = _is_binary_domain(eid)
     is_cover = eid.split(".")[0] == "cover" if "." in eid else False
     state_html = ""
-    if is_binary and not hide_state and not is_cover:
+    if is_binary and not is_cover:
         dom = eid.split(".")[0] if "." in eid else ""
         svc = _domain_toggle_service(dom)
         toggle_attrs = {
@@ -786,13 +887,16 @@ def _render_tile(card: Card, indent: int = 2) -> str:
             "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
             "hx-swap": "none",
         }
-        state_html = (
-            '<label class="toggle-switch" onclick="event.stopPropagation()">'
-            '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>'
-            '<span class="toggle-slider"></span>'
-            '</label>'
-            + _entity_span(eid, indent=indent + 2)
-        )
+        span = _entity_span(eid, indent=indent + 2)
+        state_html = span
+        if not hide_state:
+            state_html = (
+                '<label class="toggle-switch" onclick="event.stopPropagation()">'
+                '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>'
+                '<span class="toggle-slider"></span>'
+                '</label>'
+                + span
+            )
     elif is_cover and not hide_state:
         state_html = _entity_span(eid, indent=indent + 2)
     elif not hide_state:

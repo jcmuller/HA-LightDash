@@ -145,7 +145,7 @@ html, body {
 }
 .entity-icon svg {
   fill: currentColor;
-  color: #999;
+  color: var(--state-color, #999);
 }
 .entity-info {
   flex: 1;
@@ -261,7 +261,7 @@ html, body {
 }
 .glance-icon svg {
   fill: currentColor;
-  color: #999;
+  color: var(--state-color, #999);
 }
 .glance-name {
   font-size: 0.75rem;
@@ -301,7 +301,7 @@ html, body {
 }
 .button-icon svg {
   fill: currentColor;
-  color: #eee;
+  color: var(--state-color, #eee);
 }
 .button-name {
   font-size: 0.9rem;
@@ -402,6 +402,9 @@ html, body {
 .tile-card .entity-state {
   font-size: 0.85rem;
   color: #999;
+}
+.tile-card.hide-state .entity-state {
+  display: none;
 }
 .tile-info-inline {
   display: flex;

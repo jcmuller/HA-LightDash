@@ -149,7 +149,8 @@ def test_tile_toggle_switch_for_binary_entity():
 
     assert '<div class="tile-name">Porch</div>' in html
     assert 'class="tile-content vertical"' in html, "Expected vertical class"
-    assert html.count('class="entity-state"') == 2, "Expected 2 entity-state spans (light + sensor)"
+    assert html.count('class="entity-state"') == 3, "Expected 3 entity-state spans (light.test + sensor.temp + light.porch)"
+    assert html.count('class="ha-card tile-card hide-state"') == 1, "Expected 1 tile-card with hide-state class"
 
     assert "function st()" in html, "Expected toggle sync script"
 
@@ -453,8 +454,8 @@ def test_clock_card_renderer():
     assert 'data-fmt="12"' in html
 
     # Clock ticker script injected
-    assert "function uc()" in html
-    assert "setInterval(uc,30000)" in html
+    assert "function uclk()" in html
+    assert "setInterval(uclk,30000)" in html
     assert 'Intl.DateTimeFormat("en-GB"' in html or "Intl.DateTimeFormat" in html
 
 

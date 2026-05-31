@@ -26,6 +26,25 @@ class AppConfig:
 
     _options_cache: dict = field(default_factory=dict, repr=False)
 
+    @staticmethod
+    def _load_dotenv():
+        env_path = Path(".env")
+        if not env_path.exists():
+            return
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key, val = key.strip(), val.strip()
+                if val.startswith(('"', "'")) and val.endswith(('"', "'")):
+                    val = val[1:-1]
+                if key not in os.environ:
+                    os.environ[key] = val
+
     @classmethod
     def _load_options(cls) -> dict:
         try:
@@ -36,11 +55,7 @@ class AppConfig:
 
     @classmethod
     def from_env(cls) -> "AppConfig":
-        try:
-            from dotenv import load_dotenv
-            load_dotenv()
-        except ImportError:
-            pass
+        cls._load_dotenv()
 
         is_addon = Path("/data/options.json").exists()
         public_host = ""
