@@ -453,8 +453,8 @@ def test_clock_card_renderer():
     assert 'data-fmt="12"' in html
 
     # Clock ticker script injected
-    assert "function uc()" in html
-    assert "setInterval(uc,30000)" in html
+    assert "function uclk()" in html
+    assert "setInterval(uclk,30000)" in html
     assert 'Intl.DateTimeFormat("en-GB"' in html or "Intl.DateTimeFormat" in html
 
 

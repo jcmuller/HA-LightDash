@@ -211,15 +211,15 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
     if _view_needs_clock(view):
         head_extra += (
             '<script>\n'
-            'function uc(){document.querySelectorAll(".clock-digital").forEach('
+            'function uclk(){document.querySelectorAll(".clock-digital").forEach('
             'function(e){var o={hour:"2-digit",minute:"2-digit",'
             'timeZone:e.getAttribute("data-tz")||"Europe/London",'
             'hour12:e.getAttribute("data-fmt")!=="24"};'
             'if(e.getAttribute("data-sec"))o.second="2-digit";'
             'e.textContent=(new Intl.DateTimeFormat("en-GB",o)).format(new Date())})}\n'
-             'setInterval(uc,30000);\n'
-             'document.addEventListener("DOMContentLoaded",uc);\n'
-             'document.addEventListener("htmx:afterSwap",uc);\n'
+             'setInterval(uclk,30000);\n'
+             'document.addEventListener("DOMContentLoaded",uclk);\n'
+             'document.addEventListener("htmx:afterSwap",uclk);\n'
              '</script>\n'
         )
 
