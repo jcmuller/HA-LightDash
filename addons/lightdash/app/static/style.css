@@ -403,6 +403,9 @@ html, body {
   font-size: 0.85rem;
   color: #999;
 }
+.tile-card.hide-state .entity-state {
+  display: none;
+}
 .tile-info-inline {
   display: flex;
   flex-wrap: wrap;

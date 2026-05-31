@@ -129,11 +129,11 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
             'function st(){'
             'document.querySelectorAll(".tile-card").forEach(function(e){'
             'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
-            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            'if(s){var o=s.textContent.trim()==="on";if(t)t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
             '});'
             'document.querySelectorAll(".entities-card .entity-row").forEach(function(e){'
             'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
-            'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
+            'if(s){var o=s.textContent.trim()==="on";if(t)t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
             '});}\n'
             'function uc(s){'
             'var t0=s.textContent.trim().toLowerCase();'
@@ -175,13 +175,13 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
               'var c=e.target.closest(".tile-card,.entity-row");'
               'if(!c)return;'
               'if(e.target.closest("button,a,input,select,textarea,.toggle-switch,.entity-toggle"))return;'
-              'var s=c.querySelector(".entity-state"),t=c.querySelector(".toggle-input");'
-              'if(!t||!s)return;'
+               'var s=c.querySelector(".entity-state"),t=c.querySelector(".toggle-input");'
+               'if(!s)return;'
               'var x=s.textContent.trim().toLowerCase();'
               'if(x!=="on"&&x!=="off")return;'
               'var on=x==="on"?false:true;'
               's.textContent=on?"on":"off";'
-              't.checked=on;'
+               'if(t)t.checked=on;'
               'c.classList.toggle("entity-on",on);'
               'c.classList.toggle("entity-off",!on);'
               'uc(s);'
@@ -866,6 +866,8 @@ def _render_tile(card: Card, indent: int = 2) -> str:
     features_inline = card.get("features_position", "") == "inline"
 
     attrs: Dict[str, str] = {"class": "ha-card tile-card"}
+    if hide_state:
+        attrs["class"] += " hide-state"
     if color:
         attrs["style"] = "--tile-color: " + color
     elif eid:
@@ -876,7 +878,7 @@ def _render_tile(card: Card, indent: int = 2) -> str:
     is_binary = _is_binary_domain(eid)
     is_cover = eid.split(".")[0] == "cover" if "." in eid else False
     state_html = ""
-    if is_binary and not hide_state and not is_cover:
+    if is_binary and not is_cover:
         dom = eid.split(".")[0] if "." in eid else ""
         svc = _domain_toggle_service(dom)
         toggle_attrs = {
@@ -885,13 +887,16 @@ def _render_tile(card: Card, indent: int = 2) -> str:
             "hx-vals": _js_obj(entity_id=eid, action="toggle", service=svc),
             "hx-swap": "none",
         }
-        state_html = (
-            '<label class="toggle-switch" onclick="event.stopPropagation()">'
-            '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>'
-            '<span class="toggle-slider"></span>'
-            '</label>'
-            + _entity_span(eid, indent=indent + 2)
-        )
+        span = _entity_span(eid, indent=indent + 2)
+        state_html = span
+        if not hide_state:
+            state_html = (
+                '<label class="toggle-switch" onclick="event.stopPropagation()">'
+                '<input type="checkbox" class="toggle-input" ' + _build_attrs(toggle_attrs) + '>'
+                '<span class="toggle-slider"></span>'
+                '</label>'
+                + span
+            )
     elif is_cover and not hide_state:
         state_html = _entity_span(eid, indent=indent + 2)
     elif not hide_state:
