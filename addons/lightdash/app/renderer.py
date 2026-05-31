@@ -133,6 +133,7 @@ def render_view(view: View, dashboard: Dashboard, ha_url: str = "", entity_icons
             'var s=e.querySelector(".entity-state"),t=e.querySelector(".toggle-input");'
             'if(s&&t){var o=s.textContent.trim()==="on";t.checked=o;e.classList.toggle("entity-on",o);e.classList.toggle("entity-off",!o);}'
             '});}\n'
+             'document.addEventListener("DOMContentLoaded",st);\n'
              'document.addEventListener("htmx:afterSwap",st);\n'
              'document.addEventListener("htmx:sseMessage",st);\n'
              'document.addEventListener("change",function(e){'

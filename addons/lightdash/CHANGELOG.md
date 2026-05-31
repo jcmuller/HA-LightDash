@@ -1,6 +1,10 @@
 # Changelog
 Only a few days old, and LightDash has already had a handful of feature requests and 8 pull requests with contributions from other users! Shout-out to `jcmuller` on GitHub, who contributed quality-of-development improvements to make it easier to work with as a developer, a few fixes for layout bugs and column support, and a bugfix for incorrect data parsing with some entity types. Thanks, Juan!
 
+## v0.9.1 (2026-05-31)
+- **Fixed:** Toggle switches not syncing with entity state on initial page load
+  after inline rendering change — `st()` now also runs on `DOMContentLoaded`.
+
 ## v0.9.0 (2026-05-31)
 - **Optimization:** Removed `pydantic` and `python-dotenv` dependencies — smaller
   container, faster pip install, less memory at runtime.

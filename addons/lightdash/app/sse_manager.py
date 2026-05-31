@@ -41,7 +41,7 @@ class SSEManager:
         display = f"{value} {unit}" if unit else str(value)
         event_name = f"entity_{entity_id.replace('.', '_')}"
         payload = f"event: {event_name}\ndata: {html.escape(str(display))}\n\n"
-        logger.debug("SSE notify: event=%s data=%s", event_name, display)
+        logger.info("SSE notify: event=%s data=%s", event_name, display)
         dead: list[asyncio.Queue] = []
         for q in self._clients:
             try:
